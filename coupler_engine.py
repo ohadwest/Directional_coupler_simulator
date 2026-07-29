@@ -89,10 +89,12 @@ def svmodes_2d(lam_um, guess, nmodes, dx, dy, eps_mesh, polarization='ex'):
 
     N = nx * ny
     main_diag = ap.flatten('F')
-    ae_diag = ae[:-1, :].flatten('F')
-    aw_diag = aw[1:, :].flatten('F')
-    an_diag = an[:, :-1].flatten('F')
-    as_diag = as_[:, 1:].flatten('F')
+    
+    # Correct diagonal array alignment for 1D flattened Fortran-indexed 2D grid:
+    ae_diag = ae.flatten('F')[:-1]
+    aw_diag = aw.flatten('F')[1:]
+    an_diag = an.flatten('F')[:-nx]
+    as_diag = as_.flatten('F')[nx:]
     
     A = sp.diags([main_diag, ae_diag, aw_diag, an_diag, as_diag], [0, 1, -1, nx, -nx], shape=(N, N), format='csc')
     shift = (2.0 * np.pi * guess / lam_um)**2
