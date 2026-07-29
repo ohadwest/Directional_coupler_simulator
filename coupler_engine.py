@@ -1,231 +1,192 @@
+import streamlit as st
+import matplotlib.pyplot as plt
 import numpy as np
-import scipy.sparse as sp
-import scipy.sparse.linalg as spla
+import pandas as pd
+import io
+from coupler_engine import run_simulation
 
-def sellmeier_sin(lam_um):
-    """Sellmeier formula for Silicon Nitride (SiN)"""
-    b1, c1, d = 2.938, 0.13372, 0.02573
-    n_sq = 1.0 + (b1 * lam_um**2) / (lam_um**2 - c1**2) - d * lam_um**2
-    return np.sqrt(n_sq)
+st.set_page_config(
+    page_title="Silicon Photonics Coupler Dashboard",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-def sellmeier_sio2(lam_um):
-    """Sellmeier formula for Silica (SiO2)"""
-    b1, c1 = 0.6961663, 0.0684043
-    b2, c2 = 0.4079426, 0.1162414
-    b3, c3 = 0.8974794, 9.896161
-    n_sq = 1.0 + (b1 * lam_um**2) / (lam_um**2 - c1**2) + \
-                 (b2 * lam_um**2) / (lam_um**2 - c2**2) + \
-                 (b3 * lam_um**2) / (lam_um**2 - c3**2)
-    return np.sqrt(n_sq)
+st.title("⚡ Silicon Nitride Directional & Ring Coupler Solver")
+st.markdown("### 2D Semi-Vectorial Finite Difference Mode Solver & Coupled Mode Analysis")
 
-def waveguidemeshfull(n_layers, h_layers, h_core, total_half_width, side, dx, dy):
-    side1 = side2 = side
-    ih = np.round(np.array(h_layers) / dy).astype(int)
-    irh = int(np.round(h_core / dy))
-    irw = int(np.round(2 * total_half_width / dx))
-    iside1 = int(np.round(side1 / dx))
-    iside2 = int(np.round(side2 / dx))
-    
-    nx = irw + iside1 + iside2 + 1
-    ny = np.sum(ih) + 1
-    
-    x = dx * np.arange(-(irw // 2 + iside1), (irw // 2 + iside2) + 1)
-    xc = 0.5 * (x[:-1] + x[1:])
-    y = np.arange(ny) * dy
-    yc = np.arange(1, ny) * dy - dy / 2.0
-    
-    eps = np.zeros((len(xc), len(yc)))
-    iy = 0
-    for jj, n_val in enumerate(n_layers):
-        for _ in range(ih[jj]):
-            eps[:, iy] = n_val**2
-            iy += 1
-            
-    iy_start = np.sum(ih) - ih[-1] - 1
-    for _ in range(irh):
-        eps[:iside1, iy_start] = n_layers[-1]**2
-        eps[irw + iside1:, iy_start] = n_layers[-1]**2
-        iy_start -= 1
-        
-    return xc, yc, eps
+# --- SIDEBAR CONTROLS ---
+st.sidebar.header("🛠️ Coupler Parameters")
+w_single = st.sidebar.number_input("Waveguide Width w [μm]", value=1.0, step=0.1)
+h_core = st.sidebar.number_input("Waveguide Height h [μm]", value=0.3, step=0.05)
+gap = st.sidebar.number_input("Coupler Gap [μm]", value=0.3, step=0.05)
+coupler_L = st.sidebar.number_input("Straight Length L [μm]", value=35.0, step=5.0)
+ring_R = st.sidebar.number_input("Ring Radius R [μm] (0=Straight)", value=100.0, step=10.0)
+top_oxide = st.sidebar.number_input("Top Oxide Height [μm]", value=1.0, step=0.1)
 
-def svmodes_2d(lam_um, guess, nmodes, dx, dy, eps_mesh, polarization='ex'):
-    nx, ny = eps_mesh.shape
-    k0 = 2.0 * np.pi / lam_um
-    eps_padded = np.pad(eps_mesh, ((1, 1), (1, 1)), mode='edge')
-    
-    ep = eps_padded[1:nx+1, 1:ny+1]
-    en = eps_padded[1:nx+1, 2:ny+2]
-    es = eps_padded[1:nx+1, 0:ny]
-    ee = eps_padded[2:nx+2, 1:ny+1]
-    ew = eps_padded[0:nx,   1:ny+1]
-    
-    n_mat = np.full((nx, ny), dy)
-    s_mat = np.full((nx, ny), dy)
-    e_mat = np.full((nx, ny), dx)
-    w_mat = np.full((nx, ny), dx)
-    p_mat = np.full((nx, ny), dx)
-    q_mat = np.full((nx, ny), dy)
-    
-    if polarization.lower() == 'ex':
-        an = 2.0 / (n_mat * (n_mat + s_mat))
-        as_ = 2.0 / (s_mat * (n_mat + s_mat))
-        num_e = 8.0 * (p_mat * (ep - ew) + 2.0 * w_mat * ew) * ee
-        den_e = (p_mat * (ep - ee) + 2.0 * e_mat * ee) * (p_mat**2 * (ep - ew) + 4.0 * w_mat**2 * ew) + \
-                (p_mat * (ep - ew) + 2.0 * w_mat * ew) * (p_mat**2 * (ep - ee) + 4.0 * e_mat**2 * ee)
-        ae = num_e / den_e
-        num_w = 8.0 * (p_mat * (ep - ee) + 2.0 * e_mat * ee) * ew
-        aw = num_w / den_e
-        ap = ep * (k0**2) - an - as_ - ae * (ep / ee) - aw * (ep / ew)
-    else:
-        num_n = 8.0 * (q_mat * (ep - es) + 2.0 * s_mat * es) * en
-        den_n = (q_mat * (ep - en) + 2.0 * n_mat * en) * (q_mat**2 * (ep - es) + 4.0 * s_mat**2 * es) + \
-                (q_mat * (ep - es) + 2.0 * s_mat * es) * (q_mat**2 * (ep - en) + 4.0 * n_mat**2 * en)
-        an = num_n / den_n
-        as_ = 8.0 * (q_mat * (ep - en) + 2.0 * n_mat * en) * es / den_n
-        ae = 2.0 / (e_mat * (e_mat + w_mat))
-        aw = 2.0 / (w_mat * (e_mat + w_mat))
-        ap = ep * (k0**2) - an * (ep / en) - as_ * (ep / es) - ae - aw
+st.sidebar.header("🔬 Simulation Settings")
+lambda_start = st.sidebar.number_input("Start Wavelength [μm]", value=1.5, step=0.05)
+lambda_end = st.sidebar.number_input("End Wavelength [μm]", value=1.6, step=0.05)
+n_lambda = st.sidebar.slider("Wavelength Points", min_value=3, max_value=21, value=11, step=2)
+polarization = st.sidebar.selectbox("Polarization", options=["ex", "ey"], index=0)
+res_mode = st.sidebar.selectbox("Mesh Resolution", options=["lr (0.02μm)", "mr (0.01μm)", "hr (0.005μm)"], index=0)
 
-    N = nx * ny
-    main_diag = ap.flatten('F')
-    
-    # Correct diagonal array alignment for 1D flattened Fortran-indexed 2D grid:
-    ae_diag = ae.flatten('F')[:-1]
-    aw_diag = aw.flatten('F')[1:]
-    an_diag = an.flatten('F')[:-nx]
-    as_diag = as_.flatten('F')[nx:]
-    
-    A = sp.diags([main_diag, ae_diag, aw_diag, an_diag, as_diag], [0, 1, -1, nx, -nx], shape=(N, N), format='csc')
-    shift = (2.0 * np.pi * guess / lam_um)**2
-    vals, vecs = spla.eigs(A, k=nmodes, sigma=shift, which='LM')
-    
-    neff_vals = (lam_um / (2.0 * np.pi)) * np.sqrt(np.real(vals))
-    phi_modes = np.zeros((nx, ny, nmodes))
-    
-    for idx in range(nmodes):
-        mode_2d = np.real(vecs[:, idx]).reshape((nx, ny), order='F')
-        max_abs = np.max(np.abs(mode_2d))
-        if max_abs > 0:
-            mode_2d /= max_abs
-        phi_modes[:, :, idx] = mode_2d
-        
-    return phi_modes, neff_vals
+run_btn = st.sidebar.button("🚀 Run Simulation", type="primary", use_container_width=True)
 
-def run_simulation(w_single, h_core, gap, coupler_L, ring_R, lambda_start, lambda_end, n_lambda, polarization, res_mode, top_oxide):
-    """Main simulation runner function"""
-    dx = dy = 0.005 if "hr" in res_mode else (0.01 if "mr" in res_mode else 0.02)
-    top_clad_mode = 'air' if top_oxide <= 0 else 'thin_silica'
-    side = 2.0
-    
-    lambda_vec = np.linspace(lambda_start, lambda_end, n_lambda)
-    neff_even_vec = np.zeros(n_lambda)
-    neff_odd_vec = np.zeros(n_lambda)
-    kappa_vec = np.zeros(n_lambda)
-    l_residual_vec = np.zeros(n_lambda)
-    l_total_vec = np.zeros(n_lambda)
-    p_cross_vec = np.zeros(n_lambda)
-    p_bar_vec = np.zeros(n_lambda)
-    
-    idx_center = n_lambda // 2
-    
-    for i in range(n_lambda):
-        current_lambda = lambda_vec[i]
-        k0 = 2.0 * np.pi / current_lambda
-        
-        n_core = sellmeier_sin(current_lambda)
-        n_clad = sellmeier_sio2(current_lambda)
-        
-        total_half_width = w_single + gap / 2.0
-        h_layers = [4.0, h_core, 2.0]
-        n_layers = [n_clad, n_core, n_clad]
-        
-        xc, yc, eps_mesh = waveguidemeshfull(n_layers, h_layers, h_core, total_half_width, side, dx, dy)
-        nx, ny = eps_mesh.shape
-        
-        core_mask_large = np.abs(eps_mesh - n_core**2) < 1e-5
-        x_idx, y_idx = np.where(core_mask_large)
-        core_top_y = yc[np.max(y_idx)] + dy / 2.0
-        core_bottom_y = yc[np.min(y_idx)] - dy / 2.0
-        
-        gap_left, gap_right = -gap / 2.0, gap / 2.0
-        gap_mask = (xc >= gap_left) & (xc <= gap_right)
-        
-        for col in range(ny):
-            if core_bottom_y <= yc[col] <= core_top_y:
-                eps_mesh[gap_mask, col] = n_clad**2
-                
-        if top_clad_mode == 'air':
-            for col in range(ny):
-                if yc[col] > core_top_y:
-                    eps_mesh[:, col] = 1.0**2
-        else:
-            interface_y = core_top_y + top_oxide
-            for col in range(ny):
-                if yc[col] > interface_y:
-                    eps_mesh[:, col] = 1.0**2
-                    
-        guess = (n_core + n_clad) / 2.0
-        phi_modes, neff_vals = svmodes_2d(current_lambda, guess, 2, dx, dy, eps_mesh, polarization)
-        
-        sorted_indices = np.argsort(neff_vals)[::-1]
-        neff_even_vec[i] = neff_vals[sorted_indices[0]]
-        neff_odd_vec[i] = neff_vals[sorted_indices[1]]
-        
-        kappa_vec[i] = (np.pi / current_lambda) * (neff_even_vec[i] - neff_odd_vec[i])
-        
-        if ring_R > 0:
-            n_eff_avg = (neff_even_vec[i] + neff_odd_vec[i]) / 2.0
-            gamma_val = k0 * np.sqrt(max(n_eff_avg**2 - n_clad**2, 1e-4))
-            l_residual_vec[i] = np.sqrt(np.pi * ring_R / gamma_val)
-        else:
-            l_residual_vec[i] = 0.0
-            
-        l_total_vec[i] = coupler_L + l_residual_vec[i]
-        p_cross_vec[i] = (np.sin(kappa_vec[i] * l_total_vec[i]))**2 * 100.0
-        p_bar_vec[i] = (np.cos(kappa_vec[i] * l_total_vec[i]))**2 * 100.0
-        
-        if i == idx_center:
-            eps_mesh_center = eps_mesh.copy()
-            phi_even = phi_modes[:, :, sorted_indices[0]]
-            phi_odd = phi_modes[:, :, sorted_indices[1]]
-            
-            if np.sum(phi_even) < 0: phi_even = -phi_even
-            phi_even /= np.max(np.abs(phi_even))
-            
-            mid_x_idx = nx // 2
-            if np.sum(phi_odd[mid_x_idx:, :]) < 0: phi_odd = -phi_odd
-            phi_odd /= np.max(np.abs(phi_odd))
-            
-            xc_center, yc_center = xc, yc
-            lambda_center_val = current_lambda
-            box1_l, box1_r = -gap/2.0 - w_single, -gap/2.0
-            box2_l, box2_r = gap/2.0, gap/2.0 + w_single
-            b_y, t_y = core_bottom_y, core_top_y
-            mid_y_idx = np.argmin(np.abs(yc - (b_y + t_y) / 2.0))
+# Helper function to convert Matplotlib figure to PNG bytes
+def fig_to_bytes(fig):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
+    buf.seek(0)
+    return buf.getvalue()
 
-    L_ring_um = (2 * np.pi * ring_R + 2 * coupler_L) if ring_R > 0 else (2 * coupler_L)
-    L_ring_cm = L_ring_um * 1e-4
-    alpha_db_vals = np.array([0.5, 1.5, 5.0])
-    alpha_cm = alpha_db_vals * (np.log(10) / 10.0)
-    round_trip_loss_pct = (1.0 - np.exp(-alpha_cm * L_ring_cm)) * 100.0
+# --- EXECUTION & DISPLAY ---
+if run_btn or 'sim_results' in st.session_state:
+    if run_btn:
+        with st.spinner("Calculating modes and optical coupling... Please wait."):
+            st.session_state['sim_results'] = run_simulation(
+                w_single, h_core, gap, coupler_L, ring_R,
+                lambda_start, lambda_end, n_lambda, polarization, res_mode, top_oxide
+            )
+
+    d = st.session_state['sim_results']
+
+    # --- TOP METRIC CARDS ---
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Central Coupling (κ)", f"{d['kappa_vec'][d['idx_center']]:.4f} μm⁻¹")
+    m2.metric("Residual Length (L_res)", f"{d['l_residual_vec'][d['idx_center']]:.2f} μm")
+    m3.metric("Cross Power Transferred", f"{d['p_cross_vec'][d['idx_center']]:.1f} %")
+    m4.metric("Q_L (at α = 1.5 dB/cm)", f"{d['QL_vals'][1]/1e3:.1f} k")
+
+    st.markdown("---")
+
+    # --- EXPORT DATA BAR ---
+    st.subheader("📥 Export Data")
     
-    neff_avg_vec = (neff_even_vec + neff_odd_vec) / 2.0
-    lambda_cm_center = lambda_center_val * 1e-4
-    dneff_dlambda = (neff_avg_vec[-1] - neff_avg_vec[0]) / ((lambda_vec[-1] - lambda_vec[0]) * 1e-4)
-    n_group = neff_avg_vec[idx_center] - lambda_cm_center * dneff_dlambda
+    # Build DataFrame for CSV export
+    df_results = pd.DataFrame({
+        "Wavelength_um": d['lambda_vec'],
+        "Neff_Even": d['neff_even'],
+        "Neff_Odd": d['neff_odd'],
+        "Kappa_1per_um": d['kappa_vec'],
+        "L_residual_um": d['l_residual_vec'],
+        "L_total_um": d['l_total_vec'],
+        "P_cross_percent": d['p_cross_vec'],
+        "P_bar_percent": d['p_bar_vec']
+    })
     
-    Q0_vals = (2.0 * np.pi * n_group) / (lambda_cm_center * alpha_cm)
-    QL_vals = Q0_vals / 2.0
-    
-    return {
-        'xc': xc_center, 'yc': yc_center, 'eps_center': eps_mesh_center,
-        'phi_even': phi_even, 'phi_odd': phi_odd, 'mid_y_idx': mid_y_idx,
-        'lambda_vec': lambda_vec, 'neff_even': neff_even_vec, 'neff_odd': neff_odd_vec,
-        'kappa_vec': kappa_vec, 'l_residual_vec': l_residual_vec, 'l_total_vec': l_total_vec,
-        'p_cross_vec': p_cross_vec, 'p_bar_vec': p_bar_vec, 'round_trip_loss_pct': round_trip_loss_pct,
-        'QL_vals': QL_vals, 'alpha_db_vals': alpha_db_vals, 'L_ring_um': L_ring_um,
-        'lambda_center_val': lambda_center_val, 'idx_center': idx_center,
-        'box1_l': box1_l, 'box1_r': box1_r, 'box2_l': box2_l, 'box2_r': box2_r,
-        'b_y': b_y, 't_y': t_y, 'polarization': polarization
-    }
+    csv_bytes = df_results.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📄 Download Simulation Results (CSV)",
+        data=csv_bytes,
+        file_name="simulation_results.csv",
+        mime="text/csv",
+        type="secondary"
+    )
+
+    st.markdown("---")
+
+    # --- TABS FOR FIGURES ---
+    tab1, tab2, tab3, tab4 = st.tabs(["🖼️ Cross-Sections & Modes", "📈 Dispersion & Coupling", "⚡ Power Transfer", "🎯 Loss & Critical Q_L"])
+
+    def draw_boxes(ax):
+        for l, r in [(d['box1_l'], d['box1_r']), (d['box2_l'], d['box2_r'])]:
+            ax.plot([l, r, r, l, l], [d['b_y'], d['b_y'], d['t_y'], d['t_y'], d['b_y']], 'k--', lw=1.5)
+
+    with tab1:
+        col_a, col_b = st.columns(2)
+        with col_a:
+            fig1, ax1 = plt.subplots(figsize=(6, 4))
+            im1 = ax1.imshow(np.sqrt(d['eps_center']).T, origin='lower', extent=[d['xc'][0], d['xc'][-1], d['yc'][0], d['yc'][-1]], cmap='viridis', aspect='auto')
+            fig1.colorbar(im1, ax=ax1, label='Index (n)')
+            draw_boxes(ax1)
+            ax1.set_title(f"Refractive Index Profile (λ = {d['lambda_center_val']:.3f} μm)")
+            st.pyplot(fig1)
+            st.download_button("💾 Save Index Profile PNG", data=fig_to_bytes(fig1), file_name="index_profile.png", mime="image/png")
+
+            fig3, ax3 = plt.subplots(figsize=(6, 4))
+            im3 = ax3.imshow(d['phi_odd'].T, origin='lower', extent=[d['xc'][0], d['xc'][-1], d['yc'][0], d['yc'][-1]], cmap='jet', vmin=-1, vmax=1, aspect='auto')
+            fig3.colorbar(im3, ax=ax3, label='Field')
+            draw_boxes(ax3)
+            ax3.set_title(f"Antisymmetric (Odd) Mode ({d['polarization'].upper()})")
+            st.pyplot(fig3)
+            st.download_button("💾 Save Odd Mode PNG", data=fig_to_bytes(fig3), file_name="odd_mode.png", mime="image/png")
+
+        with col_b:
+            fig2, ax2 = plt.subplots(figsize=(6, 4))
+            im2 = ax2.imshow(d['phi_even'].T, origin='lower', extent=[d['xc'][0], d['xc'][-1], d['yc'][0], d['yc'][-1]], cmap='jet', vmin=0, vmax=1, aspect='auto')
+            fig2.colorbar(im2, ax=ax2, label='Field')
+            draw_boxes(ax2)
+            ax2.set_title(f"Symmetric (Even) Mode ({d['polarization'].upper()})")
+            st.pyplot(fig2)
+            st.download_button("💾 Save Even Mode PNG", data=fig_to_bytes(fig2), file_name="even_mode.png", mime="image/png")
+
+            fig4, ax4 = plt.subplots(figsize=(6, 4))
+            ax4.plot(d['xc'], d['phi_even'][:, d['mid_y_idx']], 'b-', lw=2, label='Even')
+            ax4.plot(d['xc'], d['phi_odd'][:, d['mid_y_idx']], 'r--', lw=2, label='Odd')
+            ax4.grid(True)
+            ax4.legend()
+            ax4.set_title("1D Field Profiles at Core Center")
+            st.pyplot(fig4)
+            st.download_button("💾 Save 1D Profile PNG", data=fig_to_bytes(fig4), file_name="1d_profiles.png", mime="image/png")
+
+    with tab2:
+        col_c, col_d = st.columns(2)
+        with col_c:
+            fig5, ax5 = plt.subplots(figsize=(6, 4))
+            ax5.plot(d['lambda_vec'], d['neff_even'], 'bo-', lw=2, label='n_eff Even')
+            ax5.plot(d['lambda_vec'], d['neff_odd'], 'r^-', lw=2, label='n_eff Odd')
+            ax5.grid(True)
+            ax5.legend()
+            ax5.set_xlabel('Wavelength [μm]')
+            ax5.set_ylabel('Effective Index (n_eff)')
+            ax5.set_title("Supermode Dispersion Curves")
+            st.pyplot(fig5)
+            st.download_button("💾 Save Dispersion Graph PNG", data=fig_to_bytes(fig5), file_name="dispersion.png", mime="image/png")
+
+        with col_d:
+            fig6, ax6_left = plt.subplots(figsize=(6, 4))
+            ax6_right = ax6_left.twinx()
+            ax6_left.plot(d['lambda_vec'], d['kappa_vec'], 'kd-', lw=2, label='Kappa')
+            ax6_right.plot(d['lambda_vec'], d['l_residual_vec'], 'ms-', lw=2, label='L_residual')
+            ax6_left.grid(True)
+            ax6_left.set_xlabel('Wavelength [μm]')
+            ax6_left.set_ylabel('κ [μm⁻¹]', color='k')
+            ax6_right.set_ylabel('L_residual [μm]', color='m')
+            ax6_left.set_title("Coupling Coefficient κ & Residual Length")
+            st.pyplot(fig6)
+            st.download_button("💾 Save Kappa Graph PNG", data=fig_to_bytes(fig6), file_name="kappa_coupling.png", mime="image/png")
+
+    with tab3:
+        fig7, ax7 = plt.subplots(figsize=(9, 4.5))
+        ax7.plot(d['lambda_vec'], d['p_cross_vec'], 'ro-', lw=2, label='Cross Port Power (Transferred)')
+        ax7.plot(d['lambda_vec'], d['p_bar_vec'], 'bo-', lw=2, label='Bar Port Power (Remaining)')
+        ax7.grid(True)
+        ax7.set_ylim(0, 105)
+        ax7.set_xlabel('Wavelength [μm]')
+        ax7.set_ylabel('Power Transfer [%]')
+        ax7.legend()
+        ax7.set_title("Power Transfer Ratio vs. Wavelength")
+        st.pyplot(fig7)
+        st.download_button("💾 Save Power Transfer PNG", data=fig_to_bytes(fig7), file_name="power_transfer.png", mime="image/png")
+
+    with tab4:
+        fig8, ax8 = plt.subplots(figsize=(9, 4.5))
+        ax8.plot(d['lambda_vec'], d['p_cross_vec'], 'ro-', lw=2.5, label='Coupled Power P_cross')
+        colors = ['g--', 'm--', 'k--']
+        for k in range(3):
+            loss_v = d['round_trip_loss_pct'][k]
+            ql_v = d['QL_vals'][k] / 1e3
+            alpha_db = d['alpha_db_vals'][k]
+            label_text = f"Loss = {loss_v:.3f}% (α={alpha_db}dB/cm, QL≈{ql_v:.1f}k)"
+            ax8.axhline(loss_v, color=colors[k][0], linestyle='--', lw=1.8, label=label_text)
+        ax8.grid(True)
+        ax8.set_xlabel('Wavelength [μm]')
+        ax8.set_ylabel('Power [%]')
+        ax8.legend(fontsize=9)
+        ax8.set_title(f"Ring Coupling vs. Loss & Critical Q_L (L_ring = {d['L_ring_um']:.1f} μm)")
+        st.pyplot(fig8)
+        st.download_button("💾 Save Ring Loss PNG", data=fig_to_bytes(fig8), file_name="ring_loss_QL.png", mime="image/png")
+
+else:
+    st.info("👈 Set your parameters in the sidebar and click **Run Simulation** to view the browser dashboard!")
