@@ -34,7 +34,7 @@ def waveguidemeshfull(n_layers, h_layers, h_core, total_half_width, side, dx, dy
     y = np.arange(ny) * dy
     yc = np.arange(1, ny) * dy - dy / 2.0
     
-    eps = np.zeros((nx - 1, ny - 1))
+    eps = np.zeros((len(xc), len(yc)))
     iy = 0
     for jj, n_val in enumerate(n_layers):
         for _ in range(ih[jj]):
@@ -147,9 +147,10 @@ def run_simulation(w_single, h_core, gap, coupler_L, ring_R, lambda_start, lambd
         core_bottom_y = yc[np.min(y_idx)] - dy / 2.0
         
         gap_left, gap_right = -gap / 2.0, gap / 2.0
+        gap_mask = (xc >= gap_left) & (xc <= gap_right)
+        
         for col in range(ny):
             if core_bottom_y <= yc[col] <= core_top_y:
-                gap_mask = (xc >= gap_left) & (xc <= gap_right)
                 eps_mesh[gap_mask, col] = n_clad**2
                 
         if top_clad_mode == 'air':
