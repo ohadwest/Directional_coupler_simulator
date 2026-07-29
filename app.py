@@ -1,6 +1,8 @@
 import streamlit as st
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+import io
 from coupler_engine import run_simulation
 
 st.set_page_config(
@@ -31,6 +33,13 @@ res_mode = st.sidebar.selectbox("Mesh Resolution", options=["lr (0.02μm)", "mr 
 
 run_btn = st.sidebar.button("🚀 Run Simulation", type="primary", use_container_width=True)
 
+# Helper function to convert Matplotlib figure to PNG bytes
+def fig_to_bytes(fig):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
+    buf.seek(0)
+    return buf.getvalue()
+
 # --- EXECUTION & DISPLAY ---
 if run_btn or 'sim_results' in st.session_state:
     if run_btn:
@@ -51,6 +60,32 @@ if run_btn or 'sim_results' in st.session_state:
 
     st.markdown("---")
 
+    # --- EXPORT DATA BAR ---
+    st.subheader("📥 Export Data")
+    
+    # Build DataFrame for CSV export
+    df_results = pd.DataFrame({
+        "Wavelength_um": d['lambda_vec'],
+        "Neff_Even": d['neff_even'],
+        "Neff_Odd": d['neff_odd'],
+        "Kappa_1per_um": d['kappa_vec'],
+        "L_residual_um": d['l_residual_vec'],
+        "L_total_um": d['l_total_vec'],
+        "P_cross_percent": d['p_cross_vec'],
+        "P_bar_percent": d['p_bar_vec']
+    })
+    
+    csv_bytes = df_results.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📄 Download Simulation Results (CSV)",
+        data=csv_bytes,
+        file_name="simulation_results.csv",
+        mime="text/csv",
+        type="secondary"
+    )
+
+    st.markdown("---")
+
     # --- TABS FOR FIGURES ---
     tab1, tab2, tab3, tab4 = st.tabs(["🖼️ Cross-Sections & Modes", "📈 Dispersion & Coupling", "⚡ Power Transfer", "🎯 Loss & Critical Q_L"])
 
@@ -67,6 +102,7 @@ if run_btn or 'sim_results' in st.session_state:
             draw_boxes(ax1)
             ax1.set_title(f"Refractive Index Profile (λ = {d['lambda_center_val']:.3f} μm)")
             st.pyplot(fig1)
+            st.download_button("💾 Save Index Profile PNG", data=fig_to_bytes(fig1), file_name="index_profile.png", mime="image/png")
 
             fig3, ax3 = plt.subplots(figsize=(6, 4))
             im3 = ax3.imshow(d['phi_odd'].T, origin='lower', extent=[d['xc'][0], d['xc'][-1], d['yc'][0], d['yc'][-1]], cmap='jet', vmin=-1, vmax=1, aspect='auto')
@@ -74,6 +110,7 @@ if run_btn or 'sim_results' in st.session_state:
             draw_boxes(ax3)
             ax3.set_title(f"Antisymmetric (Odd) Mode ({d['polarization'].upper()})")
             st.pyplot(fig3)
+            st.download_button("💾 Save Odd Mode PNG", data=fig_to_bytes(fig3), file_name="odd_mode.png", mime="image/png")
 
         with col_b:
             fig2, ax2 = plt.subplots(figsize=(6, 4))
@@ -82,6 +119,7 @@ if run_btn or 'sim_results' in st.session_state:
             draw_boxes(ax2)
             ax2.set_title(f"Symmetric (Even) Mode ({d['polarization'].upper()})")
             st.pyplot(fig2)
+            st.download_button("💾 Save Even Mode PNG", data=fig_to_bytes(fig2), file_name="even_mode.png", mime="image/png")
 
             fig4, ax4 = plt.subplots(figsize=(6, 4))
             ax4.plot(d['xc'], d['phi_even'][:, d['mid_y_idx']], 'b-', lw=2, label='Even')
@@ -90,6 +128,7 @@ if run_btn or 'sim_results' in st.session_state:
             ax4.legend()
             ax4.set_title("1D Field Profiles at Core Center")
             st.pyplot(fig4)
+            st.download_button("💾 Save 1D Profile PNG", data=fig_to_bytes(fig4), file_name="1d_profiles.png", mime="image/png")
 
     with tab2:
         col_c, col_d = st.columns(2)
@@ -103,6 +142,7 @@ if run_btn or 'sim_results' in st.session_state:
             ax5.set_ylabel('Effective Index (n_eff)')
             ax5.set_title("Supermode Dispersion Curves")
             st.pyplot(fig5)
+            st.download_button("💾 Save Dispersion Graph PNG", data=fig_to_bytes(fig5), file_name="dispersion.png", mime="image/png")
 
         with col_d:
             fig6, ax6_left = plt.subplots(figsize=(6, 4))
@@ -115,6 +155,7 @@ if run_btn or 'sim_results' in st.session_state:
             ax6_right.set_ylabel('L_residual [μm]', color='m')
             ax6_left.set_title("Coupling Coefficient κ & Residual Length")
             st.pyplot(fig6)
+            st.download_button("💾 Save Kappa Graph PNG", data=fig_to_bytes(fig6), file_name="kappa_coupling.png", mime="image/png")
 
     with tab3:
         fig7, ax7 = plt.subplots(figsize=(9, 4.5))
@@ -127,6 +168,7 @@ if run_btn or 'sim_results' in st.session_state:
         ax7.legend()
         ax7.set_title("Power Transfer Ratio vs. Wavelength")
         st.pyplot(fig7)
+        st.download_button("💾 Save Power Transfer PNG", data=fig_to_bytes(fig7), file_name="power_transfer.png", mime="image/png")
 
     with tab4:
         fig8, ax8 = plt.subplots(figsize=(9, 4.5))
@@ -144,6 +186,7 @@ if run_btn or 'sim_results' in st.session_state:
         ax8.legend(fontsize=9)
         ax8.set_title(f"Ring Coupling vs. Loss & Critical Q_L (L_ring = {d['L_ring_um']:.1f} μm)")
         st.pyplot(fig8)
+        st.download_button("💾 Save Ring Loss PNG", data=fig_to_bytes(fig8), file_name="ring_loss_QL.png", mime="image/png")
 
 else:
     st.info("👈 Set your parameters in the sidebar and click **Run Simulation** to view the browser dashboard!")
