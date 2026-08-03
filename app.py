@@ -24,6 +24,13 @@ coupler_L = st.sidebar.number_input("Straight Length L [μm]", value=35.0, step=
 ring_R = st.sidebar.number_input("Ring Radius R [μm] (0=Straight)", value=100.0, step=10.0)
 top_oxide = st.sidebar.number_input("Top Oxide Height [μm]", value=1.0, step=0.1)
 
+st.sidebar.header("🎯 Loss / Q_L Settings")
+st.sidebar.markdown("Set 3 loss values [dB/cm] for critical coupling analysis:")
+loss_1 = st.sidebar.number_input("Loss 1 [dB/cm]", value=0.5, step=0.1)
+loss_2 = st.sidebar.number_input("Loss 2 [dB/cm]", value=1.5, step=0.1)
+loss_3 = st.sidebar.number_input("Loss 3 [dB/cm]", value=5.0, step=0.5)
+custom_losses = [loss_1, loss_2, loss_3]
+
 st.sidebar.header("🔬 Simulation Settings")
 lambda_start = st.sidebar.number_input("Start Wavelength [μm]", value=1.5, step=0.05)
 lambda_end = st.sidebar.number_input("End Wavelength [μm]", value=1.6, step=0.05)
@@ -33,7 +40,6 @@ res_mode = st.sidebar.selectbox("Mesh Resolution", options=["lr (0.02μm)", "mr 
 
 run_btn = st.sidebar.button("🚀 Run Simulation", type="primary", use_container_width=True)
 
-# Helper function to convert Matplotlib figure to PNG bytes
 def fig_to_bytes(fig):
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
@@ -44,26 +50,43 @@ def fig_to_bytes(fig):
 if run_btn or 'sim_results' in st.session_state:
     if run_btn:
         with st.spinner("Calculating modes and optical coupling... Please wait."):
-            st.session_state['sim_results'] = run_simulation(
+            results = run_simulation(
                 w_single, h_core, gap, coupler_L, ring_R,
                 lambda_start, lambda_end, n_lambda, polarization, res_mode, top_oxide
             )
+            
+            # Recalculate Q_L and Round Trip Loss dynamically based on custom user loss values
+            alpha_db_vals = np.array(custom_losses)
+            alpha_cm = alpha_db_vals * (np.log(10) / 10.0)
+            L_ring_cm = results['L_ring_um'] * 1e-4
+            round_trip_loss_pct = (1.0 - np.exp(-alpha_cm * L_ring_cm)) * 100.0
+            
+            neff_avg_vec = (results['neff_even'] + results['neff_odd']) / 2.0
+            lambda_cm_center = results['lambda_center_val'] * 1e-4
+            dneff_dlambda = (neff_avg_vec[-1] - neff_avg_vec[0]) / ((results['lambda_vec'][-1] - results['lambda_vec'][0]) * 1e-4)
+            n_group = neff_avg_vec[results['idx_center']] - lambda_cm_center * dneff_dlambda
+            
+            Q0_vals = (2.0 * np.pi * n_group) / (lambda_cm_center * alpha_cm)
+            QL_vals = Q0_vals / 2.0
+            
+            results['alpha_db_vals'] = alpha_db_vals
+            results['round_trip_loss_pct'] = round_trip_loss_pct
+            results['QL_vals'] = QL_vals
+            
+            st.session_state['sim_results'] = results
 
     d = st.session_state['sim_results']
 
-    # --- TOP METRIC CARDS ---
+    # Display dynamic metric for the 2nd selected loss value
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Central Coupling (κ)", f"{d['kappa_vec'][d['idx_center']]:.4f} μm⁻¹")
     m2.metric("Residual Length (L_res)", f"{d['l_residual_vec'][d['idx_center']]:.2f} μm")
     m3.metric("Cross Power Transferred", f"{d['p_cross_vec'][d['idx_center']]:.1f} %")
-    m4.metric("Q_L (at α = 1.5 dB/cm)", f"{d['QL_vals'][1]/1e3:.1f} k")
+    m4.metric(f"Q_L (at α = {d['alpha_db_vals'][1]} dB/cm)", f"{d['QL_vals'][1]/1e3:.1f} k")
 
     st.markdown("---")
-
-    # --- EXPORT DATA BAR ---
     st.subheader("📥 Export Data")
     
-    # Build DataFrame for CSV export
     df_results = pd.DataFrame({
         "Wavelength_um": d['lambda_vec'],
         "Neff_Even": d['neff_even'],
@@ -85,8 +108,6 @@ if run_btn or 'sim_results' in st.session_state:
     )
 
     st.markdown("---")
-
-    # --- TABS FOR FIGURES ---
     tab1, tab2, tab3, tab4 = st.tabs(["🖼️ Cross-Sections & Modes", "📈 Dispersion & Coupling", "⚡ Power Transfer", "🎯 Loss & Critical Q_L"])
 
     def draw_boxes(ax):
