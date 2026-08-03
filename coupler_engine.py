@@ -3,13 +3,11 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
 def sellmeier_sin(lam_um):
-    """Sellmeier formula for Silicon Nitride (SiN)"""
     b1, c1, d = 2.938, 0.13372, 0.02573
     n_sq = 1.0 + (b1 * lam_um**2) / (lam_um**2 - c1**2) - d * lam_um**2
     return np.sqrt(n_sq)
 
 def sellmeier_sio2(lam_um):
-    """Sellmeier formula for Silica (SiO2)"""
     b1, c1 = 0.6961663, 0.0684043
     b2, c2 = 0.4079426, 0.1162414
     b3, c3 = 0.8974794, 9.896161
@@ -85,12 +83,10 @@ def svmodes_2d(lam_um, guess, nmodes, dx, dy, eps_mesh, polarization='ex'):
         as_ = 8.0 * (q_mat * (ep - en) + 2.0 * n_mat * en) * es / den_n
         ae = 2.0 / (e_mat * (e_mat + w_mat))
         aw = 2.0 / (w_mat * (e_mat + w_mat))
-        ap = ep * (k0**2) - an * (ep / en) - as_ * (ep / es) - ae - aw
+        ap = ep * (k0**2) - an * (ep / en) - as_ - ae - aw
 
     N = nx * ny
     main_diag = ap.flatten('F')
-    
-    # Correct diagonal array alignment for 1D flattened Fortran-indexed 2D grid:
     ae_diag = ae.flatten('F')[:-1]
     aw_diag = aw.flatten('F')[1:]
     an_diag = an.flatten('F')[:-nx]
@@ -112,8 +108,7 @@ def svmodes_2d(lam_um, guess, nmodes, dx, dy, eps_mesh, polarization='ex'):
         
     return phi_modes, neff_vals
 
-def run_simulation(w_single, h_core, gap, coupler_L, ring_R, lambda_start, lambda_end, n_lambda, polarization, res_mode, top_oxide):
-    """Main simulation runner function"""
+def run_simulation(w_single, h_core, gap, coupler_L, ring_R, lambda_start, lambda_end, n_lambda, polarization, res_mode, top_oxide, bottom_oxide=4.0):
     dx = dy = 0.005 if "hr" in res_mode else (0.01 if "mr" in res_mode else 0.02)
     top_clad_mode = 'air' if top_oxide <= 0 else 'thin_silica'
     side = 2.0
@@ -137,7 +132,7 @@ def run_simulation(w_single, h_core, gap, coupler_L, ring_R, lambda_start, lambd
         n_clad = sellmeier_sio2(current_lambda)
         
         total_half_width = w_single + gap / 2.0
-        h_layers = [4.0, h_core, 2.0]
+        h_layers = [bottom_oxide, h_core, 2.0]
         n_layers = [n_clad, n_core, n_clad]
         
         xc, yc, eps_mesh = waveguidemeshfull(n_layers, h_layers, h_core, total_half_width, side, dx, dy)
@@ -227,5 +222,7 @@ def run_simulation(w_single, h_core, gap, coupler_L, ring_R, lambda_start, lambd
         'QL_vals': QL_vals, 'alpha_db_vals': alpha_db_vals, 'L_ring_um': L_ring_um,
         'lambda_center_val': lambda_center_val, 'idx_center': idx_center,
         'box1_l': box1_l, 'box1_r': box1_r, 'box2_l': box2_l, 'box2_r': box2_r,
-        'b_y': b_y, 't_y': t_y, 'polarization': polarization
+        'b_y': b_y, 't_y': t_y, 'polarization': polarization,
+        'w_single': w_single, 'h_core': h_core, 'gap': gap, 'coupler_L': coupler_L,
+        'ring_R': ring_R, 'top_oxide': top_oxide, 'bottom_oxide': bottom_oxide
     }
