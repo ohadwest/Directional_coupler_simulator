@@ -6,7 +6,7 @@ import io
 from coupler_engine import run_simulation
 
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
@@ -52,28 +52,38 @@ def fig_to_bytes(fig):
     buf.seek(0)
     return buf.getvalue()
 
-def generate_pdf_report(d, fig_disp, fig_power):
+def generate_pdf_report(d, fig_dict):
+    """Generates a comprehensive PDF report containing all parameters, tables, and figures."""
     pdf_buffer = io.BytesIO()
-    doc = SimpleDocTemplate(pdf_buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+    doc = SimpleDocTemplate(
+        pdf_buffer,
+        pagesize=letter,
+        rightMargin=36,
+        leftMargin=36,
+        topMargin=36,
+        bottomMargin=36
+    )
     styles = getSampleStyleSheet()
     
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=18, textColor=colors.HexColor('#1E3A8A'), spaceAfter=12)
-    heading_style = ParagraphStyle('HeadingStyle', parent=styles['Heading2'], fontSize=13, textColor=colors.HexColor('#1E3A8A'), spaceBefore=10, spaceAfter=6)
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=18, textColor=colors.HexColor('#1E3A8A'), spaceAfter=8)
+    heading_style = ParagraphStyle('HeadingStyle', parent=styles['Heading2'], fontSize=12, textColor=colors.HexColor('#1E3A8A'), spaceBefore=8, spaceAfter=4)
     normal_style = styles['Normal']
     
     elements = []
     
-    elements.append(Paragraph("Silicon Nitride Directional Coupler - Simulation Report", title_style))
-    elements.append(Paragraph("Summary of parameters, modal dispersion, and optical coupling characteristics.", normal_style))
-    elements.append(Spacer(1, 12))
+    # --- HEADER & PARAMETERS ---
+    elements.append(Paragraph("Silicon Nitride Directional Coupler - Comprehensive Report", title_style))
+    elements.append(Paragraph("Detailed analysis including geometry, modal profiles, dispersion, power transfer, and Q-factor calculations.", normal_style))
+    elements.append(Spacer(1, 10))
     
-    elements.append(Paragraph("1. Device Parameters", heading_style))
+    elements.append(Paragraph("1. Simulation Parameters", heading_style))
     param_data = [
         ["Parameter", "Value", "Parameter", "Value"],
         ["Waveguide Width (w)", f"{d['w_single']} um", "Ring Radius (R)", f"{d['ring_R']} um"],
         ["Core Height (h)", f"{d['h_core']} um", "Bottom Oxide", f"{d['bottom_oxide']} um"],
         ["Gap", f"{d['gap']} um", "Top Oxide", f"{d['top_oxide']} um"],
-        ["Coupler Length (L)", f"{d['coupler_L']} um", "Polarization", f"{d['polarization'].upper()}"]
+        ["Coupler Length (L)", f"{d['coupler_L']} um", "Polarization", f"{d['polarization'].upper()}"],
+        ["Start Wavelength", f"{d['lambda_vec'][0]:.3f} um", "End Wavelength", f"{d['lambda_vec'][-1]:.3f} um"]
     ]
     t_param = Table(param_data, colWidths=[130, 110, 130, 110])
     t_param.setStyle(TableStyle([
@@ -81,44 +91,79 @@ def generate_pdf_report(d, fig_disp, fig_power):
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
-        ('PADDING', (0, 0), (-1, -1), 5),
+        ('PADDING', (0, 0), (-1, -1), 4),
     ]))
     elements.append(t_param)
-    elements.append(Spacer(1, 12))
+    elements.append(Spacer(1, 8))
     
-    elements.append(Paragraph("2. Key Simulation Results (at Central Wavelength)", heading_style))
+    elements.append(Paragraph("2. Key Results (Central Wavelength)", heading_style))
     res_data = [
         ["Metric", "Value"],
         ["Central Wavelength", f"{d['lambda_center_val']:.3f} um"],
         ["Coupling Coefficient (kappa)", f"{d['kappa_vec'][d['idx_center']]:.4f} um^-1"],
         ["Residual Length (L_res)", f"{d['l_residual_vec'][d['idx_center']]:.2f} um"],
         ["Power Transferred (P_cross)", f"{d['p_cross_vec'][d['idx_center']]:.1f} %"],
-        [f"Loaded Q (Q_L at {d['alpha_db_vals'][1]} dB/cm)", f"{d['QL_vals'][1]/1e3:.1f} k"]
+        [f"Loaded Q (Q_L at {d['alpha_db_vals'][0]} dB/cm)", f"{d['QL_vals'][0]/1e3:.1f} k"],
+        [f"Loaded Q (Q_L at {d['alpha_db_vals'][1]} dB/cm)", f"{d['QL_vals'][1]/1e3:.1f} k"],
+        [f"Loaded Q (Q_L at {d['alpha_db_vals'][2]} dB/cm)", f"{d['QL_vals'][2]/1e3:.1f} k"]
     ]
     t_res = Table(res_data, colWidths=[240, 240])
     t_res.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E2E8F0')),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
-        ('PADDING', (0, 0), (-1, -1), 5),
+        ('PADDING', (0, 0), (-1, -1), 4),
     ]))
     elements.append(t_res)
-    elements.append(Spacer(1, 14))
+    elements.append(Spacer(1, 10))
     
-    elements.append(Paragraph("3. Graphical Results", heading_style))
+    # --- PAGE 1 FIGURES: MODES & CROSS SECTIONS ---
+    elements.append(Paragraph("3. Cross-Sections & Mode Profiles", heading_style))
     
-    img_disp_data = fig_to_bytes(fig_disp)
-    img_power_data = fig_to_bytes(fig_power)
+    img_index = RLImage(io.BytesIO(fig_to_bytes(fig_dict['index'])), width=235, height=155)
+    img_even = RLImage(io.BytesIO(fig_to_bytes(fig_dict['even'])), width=235, height=155)
+    img_odd = RLImage(io.BytesIO(fig_to_bytes(fig_dict['odd'])), width=235, height=155)
+    img_1d = RLImage(io.BytesIO(fig_to_bytes(fig_dict['1d'])), width=235, height=155)
     
-    img1 = RLImage(io.BytesIO(img_disp_data), width=230, height=150)
-    img2 = RLImage(io.BytesIO(img_power_data), width=230, height=150)
-    
-    t_imgs = Table([[img1, img2]], colWidths=[240, 240])
-    t_imgs.setStyle(TableStyle([
+    t_modes = Table([
+        [img_index, img_even],
+        [img_odd, img_1d]
+    ], colWidths=[240, 240])
+    t_modes.setStyle(TableStyle([
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('PADDING', (0, 0), (-1, -1), 2),
     ]))
-    elements.append(t_imgs)
+    elements.append(t_modes)
+    
+    # --- PAGE 2: DISPERSION, POWER & LOSS ---
+    elements.append(PageBreak())
+    elements.append(Paragraph("4. Dispersion & Optical Coupling Curves", heading_style))
+    
+    img_disp = RLImage(io.BytesIO(fig_to_bytes(fig_dict['disp'])), width=235, height=155)
+    img_kappa = RLImage(io.BytesIO(fig_to_bytes(fig_dict['kappa'])), width=235, height=155)
+    
+    t_disp = Table([[img_disp, img_kappa]], colWidths=[240, 240])
+    t_disp.setStyle(TableStyle([
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('PADDING', (0, 0), (-1, -1), 2),
+    ]))
+    elements.append(t_disp)
+    elements.append(Spacer(1, 10))
+    
+    elements.append(Paragraph("5. Power Transfer & Ring Coupling Analysis", heading_style))
+    
+    img_power = RLImage(io.BytesIO(fig_to_bytes(fig_dict['power'])), width=235, height=155)
+    img_loss = RLImage(io.BytesIO(fig_to_bytes(fig_dict['loss'])), width=235, height=155)
+    
+    t_power = Table([[img_power, img_loss]], colWidths=[240, 240])
+    t_power.setStyle(TableStyle([
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('PADDING', (0, 0), (-1, -1), 2),
+    ]))
+    elements.append(t_power)
     
     doc.build(elements)
     pdf_buffer.seek(0)
@@ -161,7 +206,7 @@ if run_btn or 'sim_results' in st.session_state:
     m4.metric(f"Q_L (at α = {d['alpha_db_vals'][1]} dB/cm)", f"{d['QL_vals'][1]/1e3:.1f} k")
 
     st.markdown("---")
-    st.subheader("📥 Export Data & Summary")
+    st.subheader("📥 Export Data & Full Report")
     
     df_results = pd.DataFrame({
         "Wavelength_um": d['lambda_vec'],
@@ -174,27 +219,97 @@ if run_btn or 'sim_results' in st.session_state:
         "P_bar_percent": d['p_bar_vec']
     })
     
-    # Pre-generate figures for PDF export
-    fig_disp_pdf, ax_disp_pdf = plt.subplots(figsize=(5, 3.5))
-    ax_disp_pdf.plot(d['lambda_vec'], d['neff_even'], 'bo-', lw=1.5, label='n_eff Even')
-    ax_disp_pdf.plot(d['lambda_vec'], d['neff_odd'], 'r^-', lw=1.5, label='n_eff Odd')
-    ax_disp_pdf.grid(True)
-    ax_disp_pdf.set_xlabel('Wavelength [um]')
-    ax_disp_pdf.set_ylabel('n_eff')
-    ax_disp_pdf.set_title("Modal Dispersion", fontsize=10)
+    # --- GENERATE FIGURES FOR ALL TABS ---
+    def draw_boxes(ax):
+        for l, r in [(d['box1_l'], d['box1_r']), (d['box2_l'], d['box2_r'])]:
+            ax.plot([l, r, r, l, l], [d['b_y'], d['b_y'], d['t_y'], d['t_y'], d['b_y']], 'k--', lw=1.5)
 
-    fig_power_pdf, ax_power_pdf = plt.subplots(figsize=(5, 3.5))
-    ax_power_pdf.plot(d['lambda_vec'], d['p_cross_vec'], 'ro-', lw=1.5, label='Cross')
-    ax_power_pdf.plot(d['lambda_vec'], d['p_bar_vec'], 'bo-', lw=1.5, label='Bar')
-    ax_power_pdf.grid(True)
-    ax_power_pdf.set_xlabel('Wavelength [um]')
-    ax_power_pdf.set_ylabel('Power [%]')
-    ax_power_pdf.set_title("Power Transfer", fontsize=10)
+    # 1. Index Profile
+    fig_idx, ax_idx = plt.subplots(figsize=(6, 4))
+    im_idx = ax_idx.imshow(np.sqrt(d['eps_center']).T, origin='lower', extent=[d['xc'][0], d['xc'][-1], d['yc'][0], d['yc'][-1]], cmap='viridis', aspect='auto')
+    fig_idx.colorbar(im_idx, ax=ax_idx, label='Index (n)')
+    draw_boxes(ax_idx)
+    ax_idx.set_title(f"Refractive Index Profile (λ = {d['lambda_center_val']:.3f} μm)")
 
-    pdf_bytes = generate_pdf_report(d, fig_disp_pdf, fig_power_pdf)
-    plt.close(fig_disp_pdf)
-    plt.close(fig_power_pdf)
+    # 2. Even Mode
+    fig_even, ax_even = plt.subplots(figsize=(6, 4))
+    im_even = ax_even.imshow(d['phi_even'].T, origin='lower', extent=[d['xc'][0], d['xc'][-1], d['yc'][0], d['yc'][-1]], cmap='jet', vmin=0, vmax=1, aspect='auto')
+    fig_even.colorbar(im_even, ax=ax_even, label='Field')
+    draw_boxes(ax_even)
+    ax_even.set_title(f"Symmetric (Even) Mode ({d['polarization'].upper()})")
 
+    # 3. Odd Mode
+    fig_odd, ax_odd = plt.subplots(figsize=(6, 4))
+    im_odd = ax_odd.imshow(d['phi_odd'].T, origin='lower', extent=[d['xc'][0], d['xc'][-1], d['yc'][0], d['yc'][-1]], cmap='jet', vmin=-1, vmax=1, aspect='auto')
+    fig_odd.colorbar(im_odd, ax=ax_odd, label='Field')
+    draw_boxes(ax_odd)
+    ax_odd.set_title(f"Antisymmetric (Odd) Mode ({d['polarization'].upper()})")
+
+    # 4. 1D Profiles
+    fig_1d, ax_1d = plt.subplots(figsize=(6, 4))
+    ax_1d.plot(d['xc'], d['phi_even'][:, d['mid_y_idx']], 'b-', lw=2, label='Even')
+    ax_1d.plot(d['xc'], d['phi_odd'][:, d['mid_y_idx']], 'r--', lw=2, label='Odd')
+    ax_1d.grid(True)
+    ax_1d.legend()
+    ax_1d.set_title("1D Field Profiles at Core Center")
+
+    # 5. Dispersion
+    fig_disp, ax_disp = plt.subplots(figsize=(6, 4))
+    ax_disp.plot(d['lambda_vec'], d['neff_even'], 'bo-', lw=2, label='n_eff Even')
+    ax_disp.plot(d['lambda_vec'], d['neff_odd'], 'r^-', lw=2, label='n_eff Odd')
+    ax_disp.grid(True)
+    ax_disp.legend()
+    ax_disp.set_xlabel('Wavelength [μm]')
+    ax_disp.set_ylabel('Effective Index (n_eff)')
+    ax_disp.set_title("Supermode Dispersion Curves")
+
+    # 6. Kappa & L_res
+    fig_kappa, ax_kappa_left = plt.subplots(figsize=(6, 4))
+    ax_kappa_right = ax_kappa_left.twinx()
+    ax_kappa_left.plot(d['lambda_vec'], d['kappa_vec'], 'kd-', lw=2, label='Kappa')
+    ax_kappa_right.plot(d['lambda_vec'], d['l_residual_vec'], 'ms-', lw=2, label='L_residual')
+    ax_kappa_left.grid(True)
+    ax_kappa_left.set_xlabel('Wavelength [μm]')
+    ax_kappa_left.set_ylabel('κ [μm⁻¹]', color='k')
+    ax_kappa_right.set_ylabel('L_residual [μm]', color='m')
+    ax_kappa_left.set_title("Coupling Coefficient κ & Residual Length")
+
+    # 7. Power Transfer
+    fig_power, ax_power = plt.subplots(figsize=(7, 4))
+    ax_power.plot(d['lambda_vec'], d['p_cross_vec'], 'ro-', lw=2, label='Cross Port Power')
+    ax_power.plot(d['lambda_vec'], d['p_bar_vec'], 'bo-', lw=2, label='Bar Port Power')
+    ax_power.grid(True)
+    ax_power.set_ylim(0, 105)
+    ax_power.set_xlabel('Wavelength [μm]')
+    ax_power.set_ylabel('Power Transfer [%]')
+    ax_power.legend()
+    ax_power.set_title("Power Transfer Ratio vs. Wavelength")
+
+    # 8. Loss & Q_L
+    fig_loss, ax_loss = plt.subplots(figsize=(7, 4))
+    ax_loss.plot(d['lambda_vec'], d['p_cross_vec'], 'ro-', lw=2.5, label='Coupled Power P_cross')
+    colors_list = ['g--', 'm--', 'k--']
+    for k in range(3):
+        loss_v = d['round_trip_loss_pct'][k]
+        ql_v = d['QL_vals'][k] / 1e3
+        alpha_db = d['alpha_db_vals'][k]
+        label_text = f"Loss = {loss_v:.3f}% (α={alpha_db}dB/cm, QL≈{ql_v:.1f}k)"
+        ax_loss.axhline(loss_v, color=colors_list[k][0], linestyle='--', lw=1.8, label=label_text)
+    ax_loss.grid(True)
+    ax_loss.set_xlabel('Wavelength [μm]')
+    ax_loss.set_ylabel('Power [%]')
+    ax_loss.legend(fontsize=8)
+    ax_loss.set_title(f"Ring Coupling vs. Loss & Critical Q_L (L_ring = {d['L_ring_um']:.1f} μm)")
+
+    # Dictionary of all generated figures for the PDF
+    all_figs = {
+        'index': fig_idx, 'even': fig_even, 'odd': fig_odd, '1d': fig_1d,
+        'disp': fig_disp, 'kappa': fig_kappa, 'power': fig_power, 'loss': fig_loss
+    }
+
+    pdf_bytes = generate_pdf_report(d, all_figs)
+
+    # --- DOWNLOAD BUTTONS ---
     col_exp1, col_exp2 = st.columns(2)
     with col_exp1:
         csv_bytes = df_results.to_csv(index=False).encode('utf-8')
@@ -207,115 +322,56 @@ if run_btn or 'sim_results' in st.session_state:
         )
     with col_exp2:
         st.download_button(
-            label="📕 Download Summary Report (PDF)",
+            label="📕 Download Comprehensive PDF Report",
             data=pdf_bytes,
-            file_name="coupler_summary_report.pdf",
+            file_name="coupler_comprehensive_report.pdf",
             mime="application/pdf",
             type="primary",
             use_container_width=True
         )
 
     st.markdown("---")
-    tab1, tab2, tab3, tab4 = st.tabs(["🖼️ Cross-Sections & Modes", "📈 Dispersion & Coupling", "⚡ Power Transfer", "🎯 Loss & Critical Q_L"])
 
-    def draw_boxes(ax):
-        for l, r in [(d['box1_l'], d['box1_r']), (d['box2_l'], d['box2_r'])]:
-            ax.plot([l, r, r, l, l], [d['b_y'], d['b_y'], d['t_y'], d['t_y'], d['b_y']], 'k--', lw=1.5)
+    # --- DISPLAY TABS IN STREAMLIT ---
+    tab1, tab2, tab3, tab4 = st.tabs(["🖼️ Cross-Sections & Modes", "📈 Dispersion & Coupling", "⚡ Power Transfer", "🎯 Loss & Critical Q_L"])
 
     with tab1:
         col_a, col_b = st.columns(2)
         with col_a:
-            fig1, ax1 = plt.subplots(figsize=(6, 4))
-            im1 = ax1.imshow(np.sqrt(d['eps_center']).T, origin='lower', extent=[d['xc'][0], d['xc'][-1], d['yc'][0], d['yc'][-1]], cmap='viridis', aspect='auto')
-            fig1.colorbar(im1, ax=ax1, label='Index (n)')
-            draw_boxes(ax1)
-            ax1.set_title(f"Refractive Index Profile (λ = {d['lambda_center_val']:.3f} μm)")
-            st.pyplot(fig1)
-            st.download_button("💾 Save Index Profile PNG", data=fig_to_bytes(fig1), file_name="index_profile.png", mime="image/png")
+            st.pyplot(fig_idx)
+            st.download_button("💾 Save Index Profile PNG", data=fig_to_bytes(fig_idx), file_name="index_profile.png", mime="image/png")
 
-            fig3, ax3 = plt.subplots(figsize=(6, 4))
-            im3 = ax3.imshow(d['phi_odd'].T, origin='lower', extent=[d['xc'][0], d['xc'][-1], d['yc'][0], d['yc'][-1]], cmap='jet', vmin=-1, vmax=1, aspect='auto')
-            fig3.colorbar(im3, ax=ax3, label='Field')
-            draw_boxes(ax3)
-            ax3.set_title(f"Antisymmetric (Odd) Mode ({d['polarization'].upper()})")
-            st.pyplot(fig3)
-            st.download_button("💾 Save Odd Mode PNG", data=fig_to_bytes(fig3), file_name="odd_mode.png", mime="image/png")
+            st.pyplot(fig_odd)
+            st.download_button("💾 Save Odd Mode PNG", data=fig_to_bytes(fig_odd), file_name="odd_mode.png", mime="image/png")
 
         with col_b:
-            fig2, ax2 = plt.subplots(figsize=(6, 4))
-            im2 = ax2.imshow(d['phi_even'].T, origin='lower', extent=[d['xc'][0], d['xc'][-1], d['yc'][0], d['yc'][-1]], cmap='jet', vmin=0, vmax=1, aspect='auto')
-            fig2.colorbar(im2, ax=ax2, label='Field')
-            draw_boxes(ax2)
-            ax2.set_title(f"Symmetric (Even) Mode ({d['polarization'].upper()})")
-            st.pyplot(fig2)
-            st.download_button("💾 Save Even Mode PNG", data=fig_to_bytes(fig2), file_name="even_mode.png", mime="image/png")
+            st.pyplot(fig_even)
+            st.download_button("💾 Save Even Mode PNG", data=fig_to_bytes(fig_even), file_name="even_mode.png", mime="image/png")
 
-            fig4, ax4 = plt.subplots(figsize=(6, 4))
-            ax4.plot(d['xc'], d['phi_even'][:, d['mid_y_idx']], 'b-', lw=2, label='Even')
-            ax4.plot(d['xc'], d['phi_odd'][:, d['mid_y_idx']], 'r--', lw=2, label='Odd')
-            ax4.grid(True)
-            ax4.legend()
-            ax4.set_title("1D Field Profiles at Core Center")
-            st.pyplot(fig4)
-            st.download_button("💾 Save 1D Profile PNG", data=fig_to_bytes(fig4), file_name="1d_profiles.png", mime="image/png")
+            st.pyplot(fig_1d)
+            st.download_button("💾 Save 1D Profile PNG", data=fig_to_bytes(fig_1d), file_name="1d_profiles.png", mime="image/png")
 
     with tab2:
         col_c, col_d = st.columns(2)
         with col_c:
-            fig5, ax5 = plt.subplots(figsize=(6, 4))
-            ax5.plot(d['lambda_vec'], d['neff_even'], 'bo-', lw=2, label='n_eff Even')
-            ax5.plot(d['lambda_vec'], d['neff_odd'], 'r^-', lw=2, label='n_eff Odd')
-            ax5.grid(True)
-            ax5.legend()
-            ax5.set_xlabel('Wavelength [μm]')
-            ax5.set_ylabel('Effective Index (n_eff)')
-            ax5.set_title("Supermode Dispersion Curves")
-            st.pyplot(fig5)
-            st.download_button("💾 Save Dispersion Graph PNG", data=fig_to_bytes(fig5), file_name="dispersion.png", mime="image/png")
+            st.pyplot(fig_disp)
+            st.download_button("💾 Save Dispersion Graph PNG", data=fig_to_bytes(fig_disp), file_name="dispersion.png", mime="image/png")
 
         with col_d:
-            fig6, ax6_left = plt.subplots(figsize=(6, 4))
-            ax6_right = ax6_left.twinx()
-            ax6_left.plot(d['lambda_vec'], d['kappa_vec'], 'kd-', lw=2, label='Kappa')
-            ax6_right.plot(d['lambda_vec'], d['l_residual_vec'], 'ms-', lw=2, label='L_residual')
-            ax6_left.grid(True)
-            ax6_left.set_xlabel('Wavelength [μm]')
-            ax6_left.set_ylabel('κ [μm⁻¹]', color='k')
-            ax6_right.set_ylabel('L_residual [μm]', color='m')
-            ax6_left.set_title("Coupling Coefficient κ & Residual Length")
-            st.pyplot(fig6)
-            st.download_button("💾 Save Kappa Graph PNG", data=fig_to_bytes(fig6), file_name="kappa_coupling.png", mime="image/png")
+            st.pyplot(fig_kappa)
+            st.download_button("💾 Save Kappa Graph PNG", data=fig_to_bytes(fig_kappa), file_name="kappa_coupling.png", mime="image/png")
 
     with tab3:
-        fig7, ax7 = plt.subplots(figsize=(9, 4.5))
-        ax7.plot(d['lambda_vec'], d['p_cross_vec'], 'ro-', lw=2, label='Cross Port Power (Transferred)')
-        ax7.plot(d['lambda_vec'], d['p_bar_vec'], 'bo-', lw=2, label='Bar Port Power (Remaining)')
-        ax7.grid(True)
-        ax7.set_ylim(0, 105)
-        ax7.set_xlabel('Wavelength [μm]')
-        ax7.set_ylabel('Power Transfer [%]')
-        ax7.legend()
-        ax7.set_title("Power Transfer Ratio vs. Wavelength")
-        st.pyplot(fig7)
-        st.download_button("💾 Save Power Transfer PNG", data=fig_to_bytes(fig7), file_name="power_transfer.png", mime="image/png")
+        st.pyplot(fig_power)
+        st.download_button("💾 Save Power Transfer PNG", data=fig_to_bytes(fig_power), file_name="power_transfer.png", mime="image/png")
 
     with tab4:
-        fig8, ax8 = plt.subplots(figsize=(9, 4.5))
-        ax8.plot(d['lambda_vec'], d['p_cross_vec'], 'ro-', lw=2.5, label='Coupled Power P_cross')
-        colors = ['g--', 'm--', 'k--']
-        for k in range(3):
-            loss_v = d['round_trip_loss_pct'][k]
-            ql_v = d['QL_vals'][k] / 1e3
-            alpha_db = d['alpha_db_vals'][k]
-            label_text = f"Loss = {loss_v:.3f}% (α={alpha_db}dB/cm, QL≈{ql_v:.1f}k)"
-            ax8.axhline(loss_v, color=colors[k][0], linestyle='--', lw=1.8, label=label_text)
-        ax8.grid(True)
-        ax8.set_xlabel('Wavelength [μm]')
-        ax8.set_ylabel('Power [%]')
-        ax8.legend(fontsize=9)
-        ax8.set_title(f"Ring Coupling vs. Loss & Critical Q_L (L_ring = {d['L_ring_um']:.1f} μm)")
-        st.pyplot(fig8)
-        st.download_button("💾 Save Ring Loss PNG", data=fig_to_bytes(fig8), file_name="ring_loss_QL.png", mime="image/png")
+        st.pyplot(fig_loss)
+        st.download_button("💾 Save Ring Loss PNG", data=fig_to_bytes(fig_loss), file_name="ring_loss_QL.png", mime="image/png")
+
+    # Close matplotlib figures to free memory
+    for fig_obj in all_figs.values():
+        plt.close(fig_obj)
 
 else:
     st.info("👈 Set your parameters in the sidebar and click **Run Simulation** to view the browser dashboard!")
