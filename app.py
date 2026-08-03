@@ -5,6 +5,11 @@ import pandas as pd
 import io
 from coupler_engine import run_simulation
 
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+
 st.set_page_config(
     page_title="Silicon Photonics Coupler Dashboard",
     page_icon="⚡",
@@ -22,6 +27,7 @@ h_core = st.sidebar.number_input("Waveguide Height h [μm]", value=0.3, step=0.0
 gap = st.sidebar.number_input("Coupler Gap [μm]", value=0.3, step=0.05)
 coupler_L = st.sidebar.number_input("Straight Length L [μm]", value=35.0, step=5.0)
 ring_R = st.sidebar.number_input("Ring Radius R [μm] (0=Straight)", value=100.0, step=10.0)
+bottom_oxide = st.sidebar.number_input("Bottom Oxide Height [μm]", value=4.0, step=0.5)
 top_oxide = st.sidebar.number_input("Top Oxide Height [μm]", value=1.0, step=0.1)
 
 st.sidebar.header("🎯 Loss / Q_L Settings")
@@ -46,16 +52,87 @@ def fig_to_bytes(fig):
     buf.seek(0)
     return buf.getvalue()
 
+def generate_pdf_report(d, fig_disp, fig_power):
+    pdf_buffer = io.BytesIO()
+    doc = SimpleDocTemplate(pdf_buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=18, textColor=colors.HexColor('#1E3A8A'), spaceAfter=12)
+    heading_style = ParagraphStyle('HeadingStyle', parent=styles['Heading2'], fontSize=13, textColor=colors.HexColor('#1E3A8A'), spaceBefore=10, spaceAfter=6)
+    normal_style = styles['Normal']
+    
+    elements = []
+    
+    elements.append(Paragraph("Silicon Nitride Directional Coupler - Simulation Report", title_style))
+    elements.append(Paragraph("Summary of parameters, modal dispersion, and optical coupling characteristics.", normal_style))
+    elements.append(Spacer(1, 12))
+    
+    elements.append(Paragraph("1. Device Parameters", heading_style))
+    param_data = [
+        ["Parameter", "Value", "Parameter", "Value"],
+        ["Waveguide Width (w)", f"{d['w_single']} um", "Ring Radius (R)", f"{d['ring_R']} um"],
+        ["Core Height (h)", f"{d['h_core']} um", "Bottom Oxide", f"{d['bottom_oxide']} um"],
+        ["Gap", f"{d['gap']} um", "Top Oxide", f"{d['top_oxide']} um"],
+        ["Coupler Length (L)", f"{d['coupler_L']} um", "Polarization", f"{d['polarization'].upper()}"]
+    ]
+    t_param = Table(param_data, colWidths=[130, 110, 130, 110])
+    t_param.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E2E8F0')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
+        ('PADDING', (0, 0), (-1, -1), 5),
+    ]))
+    elements.append(t_param)
+    elements.append(Spacer(1, 12))
+    
+    elements.append(Paragraph("2. Key Simulation Results (at Central Wavelength)", heading_style))
+    res_data = [
+        ["Metric", "Value"],
+        ["Central Wavelength", f"{d['lambda_center_val']:.3f} um"],
+        ["Coupling Coefficient (kappa)", f"{d['kappa_vec'][d['idx_center']]:.4f} um^-1"],
+        ["Residual Length (L_res)", f"{d['l_residual_vec'][d['idx_center']]:.2f} um"],
+        ["Power Transferred (P_cross)", f"{d['p_cross_vec'][d['idx_center']]:.1f} %"],
+        [f"Loaded Q (Q_L at {d['alpha_db_vals'][1]} dB/cm)", f"{d['QL_vals'][1]/1e3:.1f} k"]
+    ]
+    t_res = Table(res_data, colWidths=[240, 240])
+    t_res.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E2E8F0')),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
+        ('PADDING', (0, 0), (-1, -1), 5),
+    ]))
+    elements.append(t_res)
+    elements.append(Spacer(1, 14))
+    
+    elements.append(Paragraph("3. Graphical Results", heading_style))
+    
+    img_disp_data = fig_to_bytes(fig_disp)
+    img_power_data = fig_to_bytes(fig_power)
+    
+    img1 = RLImage(io.BytesIO(img_disp_data), width=230, height=150)
+    img2 = RLImage(io.BytesIO(img_power_data), width=230, height=150)
+    
+    t_imgs = Table([[img1, img2]], colWidths=[240, 240])
+    t_imgs.setStyle(TableStyle([
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]))
+    elements.append(t_imgs)
+    
+    doc.build(elements)
+    pdf_buffer.seek(0)
+    return pdf_buffer.getvalue()
+
 # --- EXECUTION & DISPLAY ---
 if run_btn or 'sim_results' in st.session_state:
     if run_btn:
         with st.spinner("Calculating modes and optical coupling... Please wait."):
             results = run_simulation(
                 w_single, h_core, gap, coupler_L, ring_R,
-                lambda_start, lambda_end, n_lambda, polarization, res_mode, top_oxide
+                lambda_start, lambda_end, n_lambda, polarization, res_mode, top_oxide, bottom_oxide
             )
             
-            # Recalculate Q_L and Round Trip Loss dynamically based on custom user loss values
             alpha_db_vals = np.array(custom_losses)
             alpha_cm = alpha_db_vals * (np.log(10) / 10.0)
             L_ring_cm = results['L_ring_um'] * 1e-4
@@ -77,7 +154,6 @@ if run_btn or 'sim_results' in st.session_state:
 
     d = st.session_state['sim_results']
 
-    # Display dynamic metric for the 2nd selected loss value
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Central Coupling (κ)", f"{d['kappa_vec'][d['idx_center']]:.4f} μm⁻¹")
     m2.metric("Residual Length (L_res)", f"{d['l_residual_vec'][d['idx_center']]:.2f} μm")
@@ -85,7 +161,7 @@ if run_btn or 'sim_results' in st.session_state:
     m4.metric(f"Q_L (at α = {d['alpha_db_vals'][1]} dB/cm)", f"{d['QL_vals'][1]/1e3:.1f} k")
 
     st.markdown("---")
-    st.subheader("📥 Export Data")
+    st.subheader("📥 Export Data & Summary")
     
     df_results = pd.DataFrame({
         "Wavelength_um": d['lambda_vec'],
@@ -98,14 +174,46 @@ if run_btn or 'sim_results' in st.session_state:
         "P_bar_percent": d['p_bar_vec']
     })
     
-    csv_bytes = df_results.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📄 Download Simulation Results (CSV)",
-        data=csv_bytes,
-        file_name="simulation_results.csv",
-        mime="text/csv",
-        type="secondary"
-    )
+    # Pre-generate figures for PDF export
+    fig_disp_pdf, ax_disp_pdf = plt.subplots(figsize=(5, 3.5))
+    ax_disp_pdf.plot(d['lambda_vec'], d['neff_even'], 'bo-', lw=1.5, label='n_eff Even')
+    ax_disp_pdf.plot(d['lambda_vec'], d['neff_odd'], 'r^-', lw=1.5, label='n_eff Odd')
+    ax_disp_pdf.grid(True)
+    ax_disp_pdf.set_xlabel('Wavelength [um]')
+    ax_disp_pdf.set_ylabel('n_eff')
+    ax_disp_pdf.set_title("Modal Dispersion", fontsize=10)
+
+    fig_power_pdf, ax_power_pdf = plt.subplots(figsize=(5, 3.5))
+    ax_power_pdf.plot(d['lambda_vec'], d['p_cross_vec'], 'ro-', lw=1.5, label='Cross')
+    ax_power_pdf.plot(d['lambda_vec'], d['p_bar_vec'], 'bo-', lw=1.5, label='Bar')
+    ax_power_pdf.grid(True)
+    ax_power_pdf.set_xlabel('Wavelength [um]')
+    ax_power_pdf.set_ylabel('Power [%]')
+    ax_power_pdf.set_title("Power Transfer", fontsize=10)
+
+    pdf_bytes = generate_pdf_report(d, fig_disp_pdf, fig_power_pdf)
+    plt.close(fig_disp_pdf)
+    plt.close(fig_power_pdf)
+
+    col_exp1, col_exp2 = st.columns(2)
+    with col_exp1:
+        csv_bytes = df_results.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📄 Download Raw Data (CSV)",
+            data=csv_bytes,
+            file_name="simulation_results.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+    with col_exp2:
+        st.download_button(
+            label="📕 Download Summary Report (PDF)",
+            data=pdf_bytes,
+            file_name="coupler_summary_report.pdf",
+            mime="application/pdf",
+            type="primary",
+            use_container_width=True
+        )
 
     st.markdown("---")
     tab1, tab2, tab3, tab4 = st.tabs(["🖼️ Cross-Sections & Modes", "📈 Dispersion & Coupling", "⚡ Power Transfer", "🎯 Loss & Critical Q_L"])
