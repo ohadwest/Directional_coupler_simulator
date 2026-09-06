@@ -1,24 +1,4 @@
-import streamlit as st
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-import io
-from coupler_engine import run_simulation
-
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, PageBreak
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
-
-st.set_page_config(
-    page_title="Silicon Photonics Coupler Dashboard",
-    page_icon="⚡",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-st.title("⚡ Silicon Nitride Directional & Ring Coupler Solver")
-st.markdown("### 2D Semi-Vectorial Finite Difference Mode Solver & Coupled Mode Analysis")
+// ...existing code...
 
 # --- SIDEBAR CONTROLS ---
 st.sidebar.header("🛠️ Coupler Parameters")
@@ -38,167 +18,185 @@ loss_3 = st.sidebar.number_input("Loss 3 [dB/cm]", value=5.0, step=0.5)
 custom_losses = [loss_1, loss_2, loss_3]
 
 st.sidebar.header("🔬 Simulation Settings")
-lambda_start = st.sidebar.number_input("Start Wavelength [μm]", value=1.5, step=0.05)
-lambda_end = st.sidebar.number_input("End Wavelength [μm]", value=1.6, step=0.05)
-n_lambda = st.sidebar.slider("Wavelength Points", min_value=3, max_value=21, value=11, step=2)
+scan_mode = st.sidebar.selectbox("Sweep Variable", options=["Wavelength", "Gap"], index=0)
+
+if scan_mode == "Gap":
+    gap_start = st.sidebar.number_input("Gap Start [μm]", value=0.2, step=0.05)
+    gap_end = st.sidebar.number_input("Gap End [μm]", value=1.0, step=0.05)
+    n_gap = st.sidebar.slider("Gap Points", min_value=3, max_value=31, value=11, step=1)
+    wavelength_ref = st.sidebar.number_input("Reference Wavelength [μm]", value=1.55, step=0.01)
+else:
+    lambda_start = st.sidebar.number_input("Start Wavelength [μm]", value=1.5, step=0.05)
+    lambda_end = st.sidebar.number_input("End Wavelength [μm]", value=1.6, step=0.05)
+    n_lambda = st.sidebar.slider("Wavelength Points", min_value=3, max_value=21, value=11, step=2)
+
 polarization = st.sidebar.selectbox("Polarization", options=["ex", "ey"], index=0)
 res_mode = st.sidebar.selectbox("Mesh Resolution", options=["lr (0.02μm)", "mr (0.01μm)", "hr (0.005μm)"], index=0)
 
 run_btn = st.sidebar.button("🚀 Run Simulation", type="primary", use_container_width=True)
 
-def fig_to_bytes(fig):
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
-    buf.seek(0)
-    return buf.getvalue()
+# --- HELPER: GAP SWEEP ---
+def run_gap_sweep(w_single, h_core, gap_start, gap_end, n_gap, coupler_L, ring_R,
+                  wavelength_ref, polarization, res_mode, top_oxide, bottom_oxide):
+    gap_vec = np.linspace(gap_start, gap_end, n_gap)
 
-def generate_pdf_report(d, fig_dict):
-    """Generates a comprehensive PDF report containing all parameters, tables, and figures."""
-    pdf_buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        pdf_buffer,
-        pagesize=letter,
-        rightMargin=36,
-        leftMargin=36,
-        topMargin=36,
-        bottomMargin=36
-    )
-    styles = getSampleStyleSheet()
-    
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=18, textColor=colors.HexColor('#1E3A8A'), spaceAfter=8)
-    heading_style = ParagraphStyle('HeadingStyle', parent=styles['Heading2'], fontSize=12, textColor=colors.HexColor('#1E3A8A'), spaceBefore=8, spaceAfter=4)
-    normal_style = styles['Normal']
-    
-    elements = []
-    
-    # --- HEADER & PARAMETERS ---
-    elements.append(Paragraph("Silicon Nitride Directional Coupler - Comprehensive Report", title_style))
-    elements.append(Paragraph("Detailed analysis including geometry, modal profiles, dispersion, power transfer, and Q-factor calculations.", normal_style))
-    elements.append(Spacer(1, 10))
-    
-    elements.append(Paragraph("1. Simulation Parameters", heading_style))
-    param_data = [
-        ["Parameter", "Value", "Parameter", "Value"],
-        ["Waveguide Width (w)", f"{d['w_single']} um", "Ring Radius (R)", f"{d['ring_R']} um"],
-        ["Core Height (h)", f"{d['h_core']} um", "Bottom Oxide", f"{d['bottom_oxide']} um"],
-        ["Gap", f"{d['gap']} um", "Top Oxide", f"{d['top_oxide']} um"],
-        ["Coupler Length (L)", f"{d['coupler_L']} um", "Polarization", f"{d['polarization'].upper()}"],
-        ["Start Wavelength", f"{d['lambda_vec'][0]:.3f} um", "End Wavelength", f"{d['lambda_vec'][-1]:.3f} um"]
-    ]
-    t_param = Table(param_data, colWidths=[130, 110, 130, 110])
-    t_param.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E2E8F0')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
-        ('PADDING', (0, 0), (-1, -1), 4),
-    ]))
-    elements.append(t_param)
-    elements.append(Spacer(1, 8))
-    
-    elements.append(Paragraph("2. Key Results (Central Wavelength)", heading_style))
-    res_data = [
-        ["Metric", "Value"],
-        ["Central Wavelength", f"{d['lambda_center_val']:.3f} um"],
-        ["Coupling Coefficient (kappa)", f"{d['kappa_vec'][d['idx_center']]:.4f} um^-1"],
-        ["Residual Length (L_res)", f"{d['l_residual_vec'][d['idx_center']]:.2f} um"],
-        ["Power Transferred (P_cross)", f"{d['p_cross_vec'][d['idx_center']]:.1f} %"],
-        [f"Loaded Q (Q_L at {d['alpha_db_vals'][0]} dB/cm)", f"{d['QL_vals'][0]/1e3:.1f} k"],
-        [f"Loaded Q (Q_L at {d['alpha_db_vals'][1]} dB/cm)", f"{d['QL_vals'][1]/1e3:.1f} k"],
-        [f"Loaded Q (Q_L at {d['alpha_db_vals'][2]} dB/cm)", f"{d['QL_vals'][2]/1e3:.1f} k"]
-    ]
-    t_res = Table(res_data, colWidths=[240, 240])
-    t_res.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E2E8F0')),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
-        ('PADDING', (0, 0), (-1, -1), 4),
-    ]))
-    elements.append(t_res)
-    elements.append(Spacer(1, 10))
-    
-    # --- PAGE 1 FIGURES: MODES & CROSS SECTIONS ---
-    elements.append(Paragraph("3. Cross-Sections & Mode Profiles", heading_style))
-    
-    img_index = RLImage(io.BytesIO(fig_to_bytes(fig_dict['index'])), width=235, height=155)
-    img_even = RLImage(io.BytesIO(fig_to_bytes(fig_dict['even'])), width=235, height=155)
-    img_odd = RLImage(io.BytesIO(fig_to_bytes(fig_dict['odd'])), width=235, height=155)
-    img_1d = RLImage(io.BytesIO(fig_to_bytes(fig_dict['1d'])), width=235, height=155)
-    
-    t_modes = Table([
-        [img_index, img_even],
-        [img_odd, img_1d]
-    ], colWidths=[240, 240])
-    t_modes.setStyle(TableStyle([
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('PADDING', (0, 0), (-1, -1), 2),
-    ]))
-    elements.append(t_modes)
-    
-    # --- PAGE 2: DISPERSION, POWER & LOSS ---
-    elements.append(PageBreak())
-    elements.append(Paragraph("4. Dispersion & Optical Coupling Curves", heading_style))
-    
-    img_disp = RLImage(io.BytesIO(fig_to_bytes(fig_dict['disp'])), width=235, height=155)
-    img_kappa = RLImage(io.BytesIO(fig_to_bytes(fig_dict['kappa'])), width=235, height=155)
-    
-    t_disp = Table([[img_disp, img_kappa]], colWidths=[240, 240])
-    t_disp.setStyle(TableStyle([
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('PADDING', (0, 0), (-1, -1), 2),
-    ]))
-    elements.append(t_disp)
-    elements.append(Spacer(1, 10))
-    
-    elements.append(Paragraph("5. Power Transfer & Ring Coupling Analysis", heading_style))
-    
-    img_power = RLImage(io.BytesIO(fig_to_bytes(fig_dict['power'])), width=235, height=155)
-    img_loss = RLImage(io.BytesIO(fig_to_bytes(fig_dict['loss'])), width=235, height=155)
-    
-    t_power = Table([[img_power, img_loss]], colWidths=[240, 240])
-    t_power.setStyle(TableStyle([
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('PADDING', (0, 0), (-1, -1), 2),
-    ]))
-    elements.append(t_power)
-    
-    doc.build(elements)
-    pdf_buffer.seek(0)
-    return pdf_buffer.getvalue()
+    out = {
+        "scan_mode": "Gap",
+        "gap_vec": [],
+        "kappa_vec": [],
+        "p_cross_vec": [],
+        "p_bar_vec": [],
+        "l_residual_vec": [],
+        "l_total_vec": [],
+        "neff_even": [],
+        "neff_odd": [],
+        "lambda_ref": wavelength_ref,
+    }
+
+    for g in gap_vec:
+        res = run_simulation(
+            w_single=w_single,
+            h_core=h_core,
+            gap=g,
+            coupler_L=coupler_L,
+            ring_R=ring_R,
+            lambda_start=wavelength_ref,
+            lambda_end=wavelength_ref,
+            n_lambda=1,
+            polarization=polarization,
+            res_mode=res_mode,
+            top_oxide=top_oxide,
+            bottom_oxide=bottom_oxide
+        )
+
+        idx = 0
+        if len(res["lambda_vec"]) > 1:
+            idx = int(np.argmin(np.abs(np.asarray(res["lambda_vec"]) - wavelength_ref)))
+
+        out["gap_vec"].append(g)
+        out["kappa_vec"].append(res["kappa_vec"][idx])
+        out["p_cross_vec"].append(res["p_cross_vec"][idx])
+        out["p_bar_vec"].append(res["p_bar_vec"][idx])
+        out["l_residual_vec"].append(res["l_residual_vec"][idx])
+        out["l_total_vec"].append(res["l_total_vec"][idx])
+        out["neff_even"].append(res["neff_even"][idx])
+        out["neff_odd"].append(res["neff_odd"][idx])
+
+    out["gap_vec"] = np.asarray(out["gap_vec"])
+    out["kappa_vec"] = np.asarray(out["kappa_vec"])
+    out["p_cross_vec"] = np.asarray(out["p_cross_vec"])
+    out["p_bar_vec"] = np.asarray(out["p_bar_vec"])
+    out["l_residual_vec"] = np.asarray(out["l_residual_vec"])
+    out["l_total_vec"] = np.asarray(out["l_total_vec"])
+    out["neff_even"] = np.asarray(out["neff_even"])
+    out["neff_odd"] = np.asarray(out["neff_odd"])
+
+    return out
 
 # --- EXECUTION & DISPLAY ---
 if run_btn or 'sim_results' in st.session_state:
     if run_btn:
         with st.spinner("Calculating modes and optical coupling... Please wait."):
-            results = run_simulation(
-                w_single, h_core, gap, coupler_L, ring_R,
-                lambda_start, lambda_end, n_lambda, polarization, res_mode, top_oxide, bottom_oxide
-            )
-            
-            alpha_db_vals = np.array(custom_losses)
-            alpha_cm = alpha_db_vals * (np.log(10) / 10.0)
-            L_ring_cm = results['L_ring_um'] * 1e-4
-            round_trip_loss_pct = (1.0 - np.exp(-alpha_cm * L_ring_cm)) * 100.0
-            
-            neff_avg_vec = (results['neff_even'] + results['neff_odd']) / 2.0
-            lambda_cm_center = results['lambda_center_val'] * 1e-4
-            dneff_dlambda = (neff_avg_vec[-1] - neff_avg_vec[0]) / ((results['lambda_vec'][-1] - results['lambda_vec'][0]) * 1e-4)
-            n_group = neff_avg_vec[results['idx_center']] - lambda_cm_center * dneff_dlambda
-            
-            Q0_vals = (2.0 * np.pi * n_group) / (lambda_cm_center * alpha_cm)
-            QL_vals = Q0_vals / 2.0
-            
-            results['alpha_db_vals'] = alpha_db_vals
-            results['round_trip_loss_pct'] = round_trip_loss_pct
-            results['QL_vals'] = QL_vals
-            
+            if scan_mode == "Gap":
+                results = run_gap_sweep(
+                    w_single=w_single,
+                    h_core=h_core,
+                    gap_start=gap_start,
+                    gap_end=gap_end,
+                    n_gap=n_gap,
+                    coupler_L=coupler_L,
+                    ring_R=ring_R,
+                    wavelength_ref=wavelength_ref,
+                    polarization=polarization,
+                    res_mode=res_mode,
+                    top_oxide=top_oxide,
+                    bottom_oxide=bottom_oxide
+                )
+            else:
+                results = run_simulation(
+                    w_single, h_core, gap, coupler_L, ring_R,
+                    lambda_start, lambda_end, n_lambda, polarization, res_mode, top_oxide, bottom_oxide
+                )
+
+                alpha_db_vals = np.array(custom_losses)
+                alpha_cm = alpha_db_vals * (np.log(10) / 10.0)
+                L_ring_cm = results['L_ring_um'] * 1e-4
+                round_trip_loss_pct = (1.0 - np.exp(-alpha_cm * L_ring_cm)) * 100.0
+
+                neff_avg_vec = (results['neff_even'] + results['neff_odd']) / 2.0
+                lambda_cm_center = results['lambda_center_val'] * 1e-4
+                dneff_dlambda = (neff_avg_vec[-1] - neff_avg_vec[0]) / ((results['lambda_vec'][-1] - results['lambda_vec'][0]) * 1e-4)
+                n_group = neff_avg_vec[results['idx_center']] - lambda_cm_center * dneff_dlambda
+
+                Q0_vals = (2.0 * np.pi * n_group) / (lambda_cm_center * alpha_cm)
+                QL_vals = Q0_vals / 2.0
+
+                results['alpha_db_vals'] = alpha_db_vals
+                results['round_trip_loss_pct'] = round_trip_loss_pct
+                results['QL_vals'] = QL_vals
+
             st.session_state['sim_results'] = results
+            st.session_state['scan_mode'] = scan_mode
 
     d = st.session_state['sim_results']
+    scan_mode = st.session_state.get("scan_mode", scan_mode)
 
+    # --- NEW BRANCH: GAP SWEEP MODE ---
+    if scan_mode == "Gap":
+        st.title("📈 Gap Sweep Analysis")
+        st.markdown(f"### Sweeping gap from {d['gap_vec'][0]:.2f} μm to {d['gap_vec'][-1]:.2f} μm at λ = {d['lambda_ref']:.3f} μm")
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Max κ", f"{np.max(d['kappa_vec']):.4f} μm⁻¹")
+        c2.metric("Max Cross Power", f"{np.max(d['p_cross_vec']):.1f} %")
+        c3.metric("Gap at Max Cross Power", f"{d['gap_vec'][np.argmax(d['p_cross_vec'])]:.2f} μm")
+
+        fig_gap_kappa, ax_gap_kappa = plt.subplots(figsize=(8, 5))
+        ax_gap_kappa.plot(d["gap_vec"], d["kappa_vec"], "o-", color="darkorange", lw=2, label="κ")
+        ax_gap_kappa.set_xlabel("Gap [μm]")
+        ax_gap_kappa.set_ylabel("κ [μm⁻¹]")
+        ax_gap_kappa.grid(True)
+        ax_gap_kappa.set_title("Coupling Coefficient vs. Gap")
+        ax_gap_kappa.legend()
+        st.pyplot(fig_gap_kappa)
+
+        fig_gap_power, ax_gap_power = plt.subplots(figsize=(8, 5))
+        ax_gap_power.plot(d["gap_vec"], d["p_cross_vec"], "s-", color="royalblue", lw=2, label="Cross Power")
+        ax_gap_power.plot(d["gap_vec"], d["p_bar_vec"], "^-", color="forestgreen", lw=2, label="Bar Power")
+        ax_gap_power.set_xlabel("Gap [μm]")
+        ax_gap_power.set_ylabel("Power Transfer [%]")
+        ax_gap_power.set_ylim(0, 105)
+        ax_gap_power.grid(True)
+        ax_gap_power.set_title("Power Transfer vs. Gap")
+        ax_gap_power.legend()
+        st.pyplot(fig_gap_power)
+
+        gap_df = pd.DataFrame({
+            "Gap_um": d["gap_vec"],
+            "Kappa_um_inv": d["kappa_vec"],
+            "P_cross_percent": d["p_cross_vec"],
+            "P_bar_percent": d["p_bar_vec"],
+            "L_residual_um": d["l_residual_vec"],
+            "L_total_um": d["l_total_vec"],
+            "Neff_Even": d["neff_even"],
+            "Neff_Odd": d["neff_odd"],
+        })
+        st.dataframe(gap_df, use_container_width=True)
+
+        csv_gap = gap_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📄 Download Gap Sweep CSV",
+            data=csv_gap,
+            file_name="gap_sweep_results.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+
+        plt.close(fig_gap_kappa)
+        plt.close(fig_gap_power)
+        st.stop()
+
+    # --- EXISTING WAVELENGTH MODE (UNCHANGED) ---
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Central Coupling (κ)", f"{d['kappa_vec'][d['idx_center']]:.4f} μm⁻¹")
     m2.metric("Residual Length (L_res)", f"{d['l_residual_vec'][d['idx_center']]:.2f} μm")
