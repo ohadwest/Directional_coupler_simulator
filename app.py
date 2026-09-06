@@ -1,4 +1,4 @@
-// ...existing code...
+
 
 # --- SIDEBAR CONTROLS ---
 st.sidebar.header("🛠️ Coupler Parameters")
