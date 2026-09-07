@@ -1,6 +1,6 @@
 # Silicon Nitride Directional & Ring Coupler Solver
-# Version: 1.3.0
-# Written: 2026-09-07 00:27:13
+# Version: 1.4.0
+# Written: 2026-09-07 09:49:23
 # Recent changes:
 # - Added selectable sweep mode: Wavelength or Gap.
 # - Added fixed-reference-wavelength gap sweeps using the existing solver.
@@ -12,6 +12,7 @@
 # - Added live gap-sweep progress, percentage complete, elapsed time, and
 #   remaining-time estimation based on the first completed simulation.
 # - Added visible version and build metadata to the Streamlit sidebar.
+# - Added live progress and ETA for wavelength sweeps.
 
 import streamlit as st
 import matplotlib.pyplot as plt
@@ -26,8 +27,8 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
-APP_VERSION = "1.3.0"
-APP_BUILD_DATE = "2026-09-07 00:27:13"
+APP_VERSION = "1.4.0"
+APP_BUILD_DATE = "2026-09-07 09:49:23"
 
 st.set_page_config(
     page_title="Silicon Photonics Coupler Dashboard",
@@ -341,10 +342,54 @@ if run_btn or 'sim_results' in st.session_state:
                     polarization, res_mode, top_oxide, bottom_oxide
                 )
             else:
+                wavelength_start_time = time.perf_counter()
+                wavelength_progress = st.progress(
+                    0,
+                    text=f"Wavelength simulation 0/{n_lambda} (0.0%)"
+                )
+                wavelength_status = st.empty()
+
+                def update_wavelength_progress(completed_points, total_points):
+                    elapsed_time = time.perf_counter() - wavelength_start_time
+                    percentage = 100.0 * completed_points / total_points
+                    if completed_points > 0:
+                        estimated_total_time = (
+                            elapsed_time / completed_points
+                        ) * total_points
+                        remaining_time = max(
+                            0.0,
+                            estimated_total_time - elapsed_time,
+                        )
+                    else:
+                        remaining_time = 0.0
+
+                    wavelength_progress.progress(
+                        completed_points / total_points,
+                        text=(
+                            f"Wavelength simulation "
+                            f"{completed_points}/{total_points} "
+                            f"({percentage:.1f}%)"
+                        ),
+                    )
+                    wavelength_status.info(
+                        f"Wavelength sweep: {completed_points}/{total_points} "
+                        f"points completed ({percentage:.1f}%) · "
+                        f"elapsed {elapsed_time:.1f} s · "
+                        f"estimated remaining {remaining_time:.1f} s"
+                    )
+
                 results = run_simulation(
                     w_single, h_core, gap, coupler_L, ring_R,
                     lambda_start, lambda_end, n_lambda,
-                    polarization, res_mode, top_oxide, bottom_oxide
+                    polarization, res_mode, top_oxide, bottom_oxide,
+                    progress_callback=update_wavelength_progress
+                )
+                wavelength_progress.progress(
+                    1.0,
+                    text=f"Wavelength simulation {n_lambda}/{n_lambda} (100.0%)"
+                )
+                wavelength_status.success(
+                    f"Wavelength sweep completed: {n_lambda}/{n_lambda} points"
                 )
                 results["scan_mode"] = "Wavelength"
                 results["scan_vec"] = results["lambda_vec"]
