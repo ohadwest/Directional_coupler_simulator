@@ -48,10 +48,6 @@ def waveguidemeshfull(n_layers, h_layers, h_core, total_half_width, side, dx, dy
     return xc, yc, eps
 
 def svmodes_2d(lam_um, guess, nmodes, dx, dy, eps_mesh, polarization='ex'):
-    polarization = polarization.lower()
-    if polarization not in ('ex', 'ey'):
-        raise ValueError("polarization must be 'ex' or 'ey'")
-
     nx, ny = eps_mesh.shape
     k0 = 2.0 * np.pi / lam_um
     eps_padded = np.pad(eps_mesh, ((1, 1), (1, 1)), mode='edge')
@@ -69,45 +65,58 @@ def svmodes_2d(lam_um, guess, nmodes, dx, dy, eps_mesh, polarization='ex'):
     p_mat = np.full((nx, ny), dx)
     q_mat = np.full((nx, ny), dy)
     
-    if polarization.lower() == 'ex':
+    pol = polarization.lower()
+    if pol in ['ex', 'te']:
         an = 2.0 / (n_mat * (n_mat + s_mat))
         as_ = 2.0 / (s_mat * (n_mat + s_mat))
-        num_e = 8.0 * (p_mat * (ep - ew) + 2.0 * w_mat * ew) * ee
-        den_e = (p_mat * (ep - ee) + 2.0 * e_mat * ee) * (p_mat**2 * (ep - ew) + 4.0 * w_mat**2 * ew) + \
-                (p_mat * (ep - ew) + 2.0 * w_mat * ew) * (p_mat**2 * (ep - ee) + 4.0 * e_mat**2 * ee)
-        ae = num_e / den_e
-        num_w = 8.0 * (p_mat * (ep - ee) + 2.0 * e_mat * ee) * ew
-        aw = num_w / den_e
+        
+        den_ew = ((p_mat * (ep - ee) + 2.0 * e_mat * ee) * (p_mat**2 * (ep - ew) + 4.0 * w_mat**2 * ew) + 
+                  (p_mat * (ep - ew) + 2.0 * w_mat * ew) * (p_mat**2 * (ep - ee) + 4.0 * e_mat**2 * ee))
+        ae = 8.0 * (p_mat * (ep - ew) + 2.0 * w_mat * ew) * ee / den_ew
+        aw = 8.0 * (p_mat * (ep - ee) + 2.0 * e_mat * ee) * ew / den_ew
         ap = ep * (k0**2) - an - as_ - ae * (ep / ee) - aw * (ep / ew)
-    else:
-        num_n = 8.0 * (q_mat * (ep - es) + 2.0 * s_mat * es) * en
-        den_n = (q_mat * (ep - en) + 2.0 * n_mat * en) * (q_mat**2 * (ep - es) + 4.0 * s_mat**2 * es) + \
-                (q_mat * (ep - es) + 2.0 * s_mat * es) * (q_mat**2 * (ep - en) + 4.0 * n_mat**2 * en)
-        an = num_n / den_n
-        as_ = 8.0 * (q_mat * (ep - en) + 2.0 * n_mat * en) * es / den_n
+    else:  # TM / ey
+        den_ns = ((q_mat * (ep - en) + 2.0 * n_mat * en) * (q_mat**2 * (ep - es) + 4.0 * s_mat**2 * es) + 
+                  (q_mat * (ep - es) + 2.0 * s_mat * es) * (q_mat**2 * (ep - en) + 4.0 * n_mat**2 * en))
+        an = 8.0 * (q_mat * (ep - es) + 2.0 * s_mat * es) * en / den_ns
+        as_ = 8.0 * (q_mat * (ep - en) + 2.0 * n_mat * en) * es / den_ns
         ae = 2.0 / (e_mat * (e_mat + w_mat))
         aw = 2.0 / (w_mat * (e_mat + w_mat))
-        ap = ep * (k0**2) - an * (ep / en) - as_ - ae - aw
+        # תיקון תנאי השפה הדיאלקטרי ל-TM (הכפלת as_ ב-ep / es)
+        ap = ep * (k0**2) - an * (ep / en) - as_ * (ep / es) - ae - aw
 
+    # בנייה מפורשת ומדויקת של המטריצה הדלילה באמצעות קואורדינטות (מונע שגיאות גלישת קצוות לחלוטין)
     N = nx * ny
-    main_diag = ap.flatten('F')
-    ae_diag = ae.flatten('F')[:-1].copy()
-    aw_diag = aw.flatten('F')[1:].copy()
-
-    # With Fortran ordering, x is the fastest-changing index. Without these
-    # masks, the +/-1 diagonals connect the last x cell of one row to the
-    # first x cell of the next row, creating non-physical wraparound edges.
-    ae_diag[nx - 1::nx] = 0.0
-    aw_diag[nx - 1::nx] = 0.0
-
-    an_diag = an.flatten('F')[:-nx]
-    as_diag = as_.flatten('F')[nx:]
+    idx_grid = np.arange(N).reshape((nx, ny), order='F')
     
-    A = sp.diags([main_diag, ae_diag, aw_diag, an_diag, as_diag], [0, 1, -1, nx, -nx], shape=(N, N), format='csc')
+    rows = [idx_grid.flatten('F')]
+    cols = [idx_grid.flatten('F')]
+    vals = [ap.flatten('F')]
+    
+    # שכנים בציר X (מזרח ומערב)
+    rows.append(idx_grid[:-1, :].flatten('F'))
+    cols.append(idx_grid[1:, :].flatten('F'))
+    vals.append(ae[:-1, :].flatten('F'))
+    
+    rows.append(idx_grid[1:, :].flatten('F'))
+    cols.append(idx_grid[:-1, :].flatten('F'))
+    vals.append(aw[1:, :].flatten('F'))
+    
+    # שכנים בציר Y (צפון ודרום)
+    rows.append(idx_grid[:, :-1].flatten('F'))
+    cols.append(idx_grid[:, 1:].flatten('F'))
+    vals.append(an[:, :-1].flatten('F'))
+    
+    rows.append(idx_grid[:, 1:].flatten('F'))
+    cols.append(idx_grid[:, :-1].flatten('F'))
+    vals.append(as_[:, 1:].flatten('F'))
+    
+    A = sp.coo_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(N, N)).tocsc()
     shift = (2.0 * np.pi * guess / lam_um)**2
-    vals, vecs = spla.eigs(A, k=nmodes, sigma=shift, which='LM')
     
-    neff_vals = (lam_um / (2.0 * np.pi)) * np.sqrt(np.real(vals))
+    vals_eig, vecs = spla.eigs(A, k=nmodes, sigma=shift, which='LM')
+    
+    neff_vals = (lam_um / (2.0 * np.pi)) * np.sqrt(np.real(vals_eig))
     phi_modes = np.zeros((nx, ny, nmodes))
     
     for idx in range(nmodes):
@@ -173,7 +182,12 @@ def run_simulation(w_single, h_core, gap, coupler_L, ring_R, lambda_start, lambd
                 if yc[col] > interface_y:
                     eps_mesh[:, col] = 1.0**2
                     
-        guess = (n_core + n_clad) / 2.0
+        # התאמת ניחוש ראשוני מיטבי לקיטוב
+        if polarization.lower() in ['ey', 'tm']:
+            guess = n_clad + 0.35 * (n_core - n_clad)
+        else:
+            guess = (n_core + n_clad) / 2.0
+
         phi_modes, neff_vals = svmodes_2d(current_lambda, guess, 2, dx, dy, eps_mesh, polarization)
         
         sorted_indices = np.argsort(neff_vals)[::-1]
@@ -198,11 +212,13 @@ def run_simulation(w_single, h_core, gap, coupler_L, ring_R, lambda_start, lambd
             phi_even = phi_modes[:, :, sorted_indices[0]]
             phi_odd = phi_modes[:, :, sorted_indices[1]]
             
-            if np.sum(phi_even) < 0: phi_even = -phi_even
+            if np.sum(phi_even) < 0: 
+                phi_even = -phi_even
             phi_even /= np.max(np.abs(phi_even))
             
             mid_x_idx = nx // 2
-            if np.sum(phi_odd[mid_x_idx:, :]) < 0: phi_odd = -phi_odd
+            if np.sum(phi_odd[mid_x_idx:, :]) < 0: 
+                phi_odd = -phi_odd
             phi_odd /= np.max(np.abs(phi_odd))
             
             xc_center, yc_center = xc, yc
