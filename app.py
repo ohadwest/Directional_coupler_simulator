@@ -75,7 +75,15 @@ else:
     n_gap = st.sidebar.slider("Gap Points", min_value=3, max_value=51, value=11, step=1)
     reference_wavelength = st.sidebar.number_input("Reference Wavelength [μm]", min_value=0.1, value=1.55, step=0.01)
 
-polarization = st.sidebar.selectbox("Polarization", options=["ex", "ey"], index=0)
+polarization_label = st.sidebar.selectbox(
+    "Polarization",
+    options=["TE-like (Ex)", "TM-like (Ey)"],
+    index=0,
+)
+polarization = {
+    "TE-like (Ex)": "ex",
+    "TM-like (Ey)": "ey",
+}[polarization_label]
 res_mode = st.sidebar.selectbox("Mesh Resolution", options=["lr (0.02μm)", "mr (0.01μm)", "hr (0.005μm)"], index=0)
 
 run_btn = st.sidebar.button("🚀 Run Simulation", type="primary", use_container_width=True)
