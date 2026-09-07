@@ -48,6 +48,10 @@ def waveguidemeshfull(n_layers, h_layers, h_core, total_half_width, side, dx, dy
     return xc, yc, eps
 
 def svmodes_2d(lam_um, guess, nmodes, dx, dy, eps_mesh, polarization='ex'):
+    polarization = polarization.lower()
+    if polarization not in ('ex', 'ey'):
+        raise ValueError("polarization must be 'ex' or 'ey'")
+
     nx, ny = eps_mesh.shape
     k0 = 2.0 * np.pi / lam_um
     eps_padded = np.pad(eps_mesh, ((1, 1), (1, 1)), mode='edge')
@@ -87,8 +91,15 @@ def svmodes_2d(lam_um, guess, nmodes, dx, dy, eps_mesh, polarization='ex'):
 
     N = nx * ny
     main_diag = ap.flatten('F')
-    ae_diag = ae.flatten('F')[:-1]
-    aw_diag = aw.flatten('F')[1:]
+    ae_diag = ae.flatten('F')[:-1].copy()
+    aw_diag = aw.flatten('F')[1:].copy()
+
+    # With Fortran ordering, x is the fastest-changing index. Without these
+    # masks, the +/-1 diagonals connect the last x cell of one row to the
+    # first x cell of the next row, creating non-physical wraparound edges.
+    ae_diag[nx - 1::nx] = 0.0
+    aw_diag[nx - 1::nx] = 0.0
+
     an_diag = an.flatten('F')[:-nx]
     as_diag = as_.flatten('F')[nx:]
     

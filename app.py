@@ -1,6 +1,6 @@
 # Silicon Nitride Directional & Ring Coupler Solver
-# Version: 1.4.0
-# Written: 2026-09-07 09:49:23
+# Version: 1.5.0
+# Written: 2026-09-07 09:57:50
 # Recent changes:
 # - Added selectable sweep mode: Wavelength or Gap.
 # - Added fixed-reference-wavelength gap sweeps using the existing solver.
@@ -13,6 +13,7 @@
 #   remaining-time estimation based on the first completed simulation.
 # - Added visible version and build metadata to the Streamlit sidebar.
 # - Added live progress and ETA for wavelength sweeps.
+# - Fixed invalid sparse-matrix wraparound connections in the mode solver.
 
 import streamlit as st
 import matplotlib.pyplot as plt
@@ -27,8 +28,8 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
-APP_VERSION = "1.4.0"
-APP_BUILD_DATE = "2026-09-07 09:49:23"
+APP_VERSION = "1.5.0"
+APP_BUILD_DATE = "2026-09-07 09:57:50"
 
 st.set_page_config(
     page_title="Silicon Photonics Coupler Dashboard",
