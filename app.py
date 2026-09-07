@@ -1,5 +1,5 @@
 # Silicon Nitride Directional & Ring Coupler Solver
-# Version: 1.2.0
+# Version: 1.3.0
 # Written: 2026-09-07 00:27:13
 # Recent changes:
 # - Added selectable sweep mode: Wavelength or Gap.
@@ -11,6 +11,7 @@
 #   comprehensive PDF report, and wavelength-sweep behavior.
 # - Added live gap-sweep progress, percentage complete, elapsed time, and
 #   remaining-time estimation based on the first completed simulation.
+# - Added visible version and build metadata to the Streamlit sidebar.
 
 import streamlit as st
 import matplotlib.pyplot as plt
@@ -24,6 +25,9 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+
+APP_VERSION = "1.3.0"
+APP_BUILD_DATE = "2026-09-07 00:27:13"
 
 st.set_page_config(
     page_title="Silicon Photonics Coupler Dashboard",
@@ -73,6 +77,14 @@ polarization = st.sidebar.selectbox("Polarization", options=["ex", "ey"], index=
 res_mode = st.sidebar.selectbox("Mesh Resolution", options=["lr (0.02μm)", "mr (0.01μm)", "hr (0.005μm)"], index=0)
 
 run_btn = st.sidebar.button("🚀 Run Simulation", type="primary", use_container_width=True)
+
+st.sidebar.divider()
+st.sidebar.caption("Dashboard build")
+st.sidebar.code(
+    f"Version: {APP_VERSION}\n"
+    f"Built:   {APP_BUILD_DATE}",
+    language="text",
+)
 
 def fig_to_bytes(fig):
     buf = io.BytesIO()
