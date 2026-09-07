@@ -1,6 +1,6 @@
 # Silicon Nitride Directional & Ring Coupler Solver
-# Version: 1.1.0
-# Written: 2026-09-07 00:23:39
+# Version: 1.2.0
+# Written: 2026-09-07 00:27:13
 # Recent changes:
 # - Added selectable sweep mode: Wavelength or Gap.
 # - Added fixed-reference-wavelength gap sweeps using the existing solver.
@@ -9,12 +9,15 @@
 # - Updated CSV export to label the scanned variable correctly.
 # - Preserved the existing dashboard layout, tabs, mode figures, PNG exports,
 #   comprehensive PDF report, and wavelength-sweep behavior.
+# - Added live gap-sweep progress, percentage complete, elapsed time, and
+#   remaining-time estimation based on the first completed simulation.
 
 import streamlit as st
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import io
+import time
 from coupler_engine import run_simulation
 
 from reportlab.lib.pagesizes import letter
@@ -206,14 +209,60 @@ def run_gap_sweep(
     gap_vec = np.linspace(gap_start, gap_end, n_gap)
     delta_lambda = 1e-6
     sweep_results = []
+    total_simulations = len(gap_vec)
+    progress_bar = st.progress(0, text=f"Simulation 0/{total_simulations} (0.0%)")
+    progress_status = st.empty()
+    sweep_start_time = time.perf_counter()
+    first_simulation_time = None
 
-    for current_gap in gap_vec:
+    for simulation_number, current_gap in enumerate(gap_vec, start=1):
+        completed_simulations = simulation_number - 1
+        completed_percentage = 100.0 * completed_simulations / total_simulations
+        progress_bar.progress(
+            completed_simulations / total_simulations,
+            text=f"Running simulation {simulation_number}/{total_simulations} "
+                 f"({completed_percentage:.1f}% complete)"
+        )
+        progress_status.info(
+            f"Gap sweep: running simulation {simulation_number}/{total_simulations} "
+            f"({completed_percentage:.1f}% complete)"
+        )
+
         sweep_results.append(run_simulation(
             w_single, h_core, float(current_gap), coupler_L, ring_R,
             reference_wavelength - delta_lambda,
             reference_wavelength + delta_lambda,
             3, polarization, res_mode, top_oxide, bottom_oxide
         ))
+
+        elapsed_time = time.perf_counter() - sweep_start_time
+        if first_simulation_time is None:
+            first_simulation_time = elapsed_time
+
+        # Use the first completed simulation for the initial ETA. Once more
+        # samples are available, use the measured average time per simulation.
+        if simulation_number == 1:
+            estimated_total_time = first_simulation_time * total_simulations
+        else:
+            estimated_total_time = (elapsed_time / simulation_number) * total_simulations
+
+        remaining_time = max(0.0, estimated_total_time - elapsed_time)
+        percentage = 100.0 * simulation_number / total_simulations
+        progress_bar.progress(
+            simulation_number / total_simulations,
+            text=f"Simulation {simulation_number}/{total_simulations} ({percentage:.1f}%)"
+        )
+        progress_status.info(
+            f"Gap sweep: {simulation_number}/{total_simulations} simulations completed "
+            f"({percentage:.1f}%) · elapsed {elapsed_time:.1f} s · "
+            f"estimated remaining {remaining_time:.1f} s"
+        )
+
+    progress_bar.progress(1.0, text=f"Simulation {total_simulations}/{total_simulations} (100.0%)")
+    progress_status.success(
+        f"Gap sweep completed: {total_simulations}/{total_simulations} simulations "
+        f"in {time.perf_counter() - sweep_start_time:.1f} s"
+    )
 
     center_index = len(gap_vec) // 2
     output = sweep_results[center_index].copy()
