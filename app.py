@@ -228,11 +228,30 @@ def run_gap_sweep(
             f"({completed_percentage:.1f}% complete)"
         )
 
+        def update_solver_progress(completed_wavelengths, total_wavelengths):
+            fraction = completed_wavelengths / total_wavelengths
+            overall_fraction = (
+                (simulation_number - 1) + fraction
+            ) / total_simulations
+            overall_percentage = 100.0 * overall_fraction
+            progress_bar.progress(
+                overall_fraction,
+                text=(
+                    f"Simulation {simulation_number}/{total_simulations} "
+                    f"({overall_percentage:.1f}% complete)"
+                )
+            )
+            progress_status.info(
+                f"Gap sweep: simulation {simulation_number}/{total_simulations} "
+                f"in progress ({overall_percentage:.1f}% complete)"
+            )
+
         sweep_results.append(run_simulation(
             w_single, h_core, float(current_gap), coupler_L, ring_R,
             reference_wavelength - delta_lambda,
             reference_wavelength + delta_lambda,
-            3, polarization, res_mode, top_oxide, bottom_oxide
+            3, polarization, res_mode, top_oxide, bottom_oxide,
+            progress_callback=update_solver_progress
         ))
 
         elapsed_time = time.perf_counter() - sweep_start_time

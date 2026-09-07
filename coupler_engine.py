@@ -108,7 +108,7 @@ def svmodes_2d(lam_um, guess, nmodes, dx, dy, eps_mesh, polarization='ex'):
         
     return phi_modes, neff_vals
 
-def run_simulation(w_single, h_core, gap, coupler_L, ring_R, lambda_start, lambda_end, n_lambda, polarization, res_mode, top_oxide, bottom_oxide=4.0):
+def run_simulation(w_single, h_core, gap, coupler_L, ring_R, lambda_start, lambda_end, n_lambda, polarization, res_mode, top_oxide, bottom_oxide=4.0, progress_callback=None):
     dx = dy = 0.005 if "hr" in res_mode else (0.01 if "mr" in res_mode else 0.02)
     top_clad_mode = 'air' if top_oxide <= 0 else 'thin_silica'
     side = 2.0
@@ -126,6 +126,8 @@ def run_simulation(w_single, h_core, gap, coupler_L, ring_R, lambda_start, lambd
     
     for i in range(n_lambda):
         current_lambda = lambda_vec[i]
+        if progress_callback is not None:
+            progress_callback(i, n_lambda)
         k0 = 2.0 * np.pi / current_lambda
         
         n_core = sellmeier_sin(current_lambda)
@@ -198,6 +200,9 @@ def run_simulation(w_single, h_core, gap, coupler_L, ring_R, lambda_start, lambd
             box2_l, box2_r = gap/2.0, gap/2.0 + w_single
             b_y, t_y = core_bottom_y, core_top_y
             mid_y_idx = np.argmin(np.abs(yc - (b_y + t_y) / 2.0))
+
+        if progress_callback is not None:
+            progress_callback(i + 1, n_lambda)
 
     L_ring_um = (2 * np.pi * ring_R + 2 * coupler_L) if ring_R > 0 else (2 * coupler_L)
     L_ring_cm = L_ring_um * 1e-4
